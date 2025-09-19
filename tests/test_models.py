@@ -152,7 +152,7 @@ class TestAnalysisResult(unittest.TestCase):
         )
         
         self.result = AnalysisResult(
-            analyzer="security_scanner",
+            analyzer="security_analyzer",
             status=AnalysisStatus.SUCCESS,
             findings=[self.finding],
             metrics={"score": 85.5, "issues_found": 1}
@@ -226,7 +226,7 @@ class TestEvaluationReport(unittest.TestCase):
     
     def test_invalid_dimension_scores(self):
         """Test validation with invalid dimension scores."""
-        self.dimension_scores.correctness = -10.0
+        self.dimension_scores.correctness_analyzer = -10.0
         errors = self.report.validate()
         self.assertIn("Dimension scores: correctness score must be between 0.0 and 100.0", errors)
     
