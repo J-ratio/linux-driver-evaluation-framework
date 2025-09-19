@@ -123,8 +123,8 @@ class EvaluationConfiguration:
 class EvaluationRequest:
     """Represents a request to evaluate Linux driver code."""
     id: str
-    timestamp: datetime
     source_files: List[SourceFile]
+    timestamp: datetime = field(default_factory=datetime.now)
     configuration: EvaluationConfiguration = field(default_factory=EvaluationConfiguration)
     
     def to_dict(self) -> Dict[str, Any]:
