@@ -1,0 +1,71 @@
+{
+  "system": {
+    "max_file_size_mb": 10,
+    "analysis_timeout_seconds": 300,
+    "temp_dir": "/tmp/driver_eval",
+    "log_level": "INFO"
+  },
+  "compilation": {
+    "kernel_version": "5.15",
+    "gcc_flags": ["-Wall", "-Wextra", "-Werror"],
+    "sparse_enabled": true,
+    "sparse_flags": ["-Wbitwise", "-Wcast-to-as"]
+  },
+  "analyzers": {
+    "correctness": {
+      "enabled": true,
+      "clang_tidy_checks": [
+        "clang-analyzer-*",
+        "bugprone-*",
+        "cert-*"
+      ],
+      "coccinelle_rules": "rules/kernel_api.cocci"
+    },
+    "security": {
+      "enabled": true,
+      "flawfinder_min_level": 2,
+      "smatch_enabled": true,
+      "dangerous_functions": [
+        "strcpy", "sprintf", "gets", "strcat"
+      ]
+    },
+    "code_quality": {
+      "enabled": true,
+      "checkpatch_strict": false,
+      "max_complexity": 15,
+      "min_documentation_coverage": 0.7
+    },
+    "performance": {
+      "enabled": true,
+      "complexity_analysis": true,
+      "memory_pattern_detection": true
+    },
+    "advanced_features": {
+      "enabled": true,
+      "power_management_patterns": true,
+      "device_tree_integration": true,
+      "interrupt_handling": true
+    }
+  },
+  "scoring": {
+    "weights": {
+      "correctness": 0.40,
+      "security": 0.25,
+      "code_quality": 0.20,
+      "performance": 0.10,
+      "advanced_features": 0.05
+    },
+    "grade_thresholds": {
+      "A": 90.0,
+      "B": 80.0,
+      "C": 70.0,
+      "D": 60.0,
+      "F": 0.0
+    }
+  },
+  "reporting": {
+    "formats": ["json", "html", "pdf"],
+    "include_recommendations": true,
+    "max_findings_per_type": 50
+  }
+}
