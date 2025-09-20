@@ -304,7 +304,7 @@ class TestConflictResolutionRule(unittest.TestCase):
         """Test default analyzer priority order."""
         rule = ConflictResolutionRule()
         
-        expected_order = ["compilation", "sparse", "security", "correctness", "code_quality", "performance"]
+        expected_order = ["compilation", "security", "correctness", "code_quality", "performance"]
         self.assertEqual(rule.priority_order, expected_order)
         self.assertTrue(rule.merge_similar)
         self.assertEqual(rule.similarity_threshold, 0.8)

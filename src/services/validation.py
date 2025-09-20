@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 
-from models.evaluation import SourceFile
+from src.models.evaluation import SourceFile
 
 
 class ValidationError(Exception):
@@ -417,6 +417,42 @@ class LinuxDriverDetector:
         score += min(len(code_lines) // 10, 25)  # Max 25 points for LOC
         
         return min(score, 100)
+
+
+class ValidationService:
+    """Simple validation service for web interface compatibility."""
+    
+    def __init__(self):
+        """Initialize the validation service."""
+        self.input_validator = InputValidator()
+    
+    def is_valid_driver_code(self, content: str) -> bool:
+        """
+        Simple check if content appears to be Linux driver code.
+        
+        Args:
+            content: The C source code content
+            
+        Returns:
+            True if it appears to be driver code, False otherwise
+        """
+        # Check for basic kernel module patterns
+        kernel_patterns = [
+            r'#include\s*[<"]linux/',
+            r'module_init\s*\(',
+            r'module_exit\s*\(',
+            r'MODULE_LICENSE\s*\(',
+            r'struct\s+\w+\s*\{',
+            r'static\s+\w+',
+            r'__init\s+',
+            r'__exit\s+'
+        ]
+        
+        for pattern in kernel_patterns:
+            if re.search(pattern, content):
+                return True
+        
+        return False
 
 
 class InputValidator:

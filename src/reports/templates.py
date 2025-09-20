@@ -10,7 +10,8 @@ from typing import Dict, Any, List
 from datetime import datetime
 from abc import ABC, abstractmethod
 
-from ..models.evaluation import EvaluationReport, Finding, Severity, Grade
+from ..models.evaluation import EvaluationReport, Finding, Grade
+from ..core.interfaces import Severity
 
 
 class BaseTemplate(ABC):

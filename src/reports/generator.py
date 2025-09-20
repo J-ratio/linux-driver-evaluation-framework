@@ -11,7 +11,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pathlib import Path
 
-from ..models.evaluation import EvaluationReport, Finding, Severity, Grade
+from ..models.evaluation import EvaluationReport, Finding, Grade
+from ..core.interfaces import Severity
 from .templates import HTMLTemplate, PDFTemplate, JSONTemplate
 from .summary import SummaryGenerator
 

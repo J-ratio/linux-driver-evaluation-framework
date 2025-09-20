@@ -1,13 +1,12 @@
-# Kernel module Makefile template
-# This file will be customized for each compilation
-
+# Simple kernel module Makefile template
 obj-m := $(OBJECTS)
 
-KDIR := /lib/modules/$(shell uname -r)/build
+# Use generic kernel build directory in Docker
+KDIR := /lib/modules/generic/build
 PWD := $(shell pwd)
 
 # Compilation flags
-ccflags-y := -Wall -Wextra -Werror=implicit-function-declaration
+ccflags-y := -Wall -Wextra
 
 default:
 	$(MAKE) -C $(KDIR) M=$(PWD) modules
@@ -15,19 +14,4 @@ default:
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
 
-# Standard sparse analysis
-sparse:
-	$(MAKE) -C $(KDIR) M=$(PWD) C=2 CF="-D__CHECK_ENDIAN__" modules
-
-# Enhanced sparse analysis with additional checks
-sparse-enhanced:
-	$(MAKE) -C $(KDIR) M=$(PWD) C=2 CF="-D__CHECK_ENDIAN__ -Wbitwise -Wcast-to-as -Wdefault-bitfield-sign -Wdo-while -Winit-cstring -Wone-bit-signed-bitfield -Wparen-string -Wptr-subtraction-blows -Wreturn-void -Wshadow -Wtransparent-union -Wtypesign -Wundef" modules
-
-# Context-sensitive analysis for locking and other kernel contexts
-sparse-context:
-	$(MAKE) -C $(KDIR) M=$(PWD) C=2 CF="-D__CHECK_ENDIAN__ -Wcontext -Wcast-truncate" modules
-
-# All sparse checks combined
-sparse-all: sparse sparse-enhanced sparse-context
-
-.PHONY: default clean sparse sparse-enhanced sparse-context sparse-all
+.PHONY: default clean

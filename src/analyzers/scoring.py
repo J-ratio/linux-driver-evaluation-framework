@@ -8,11 +8,11 @@ multiple analyzers to produce overall quality scores and letter grades.
 from typing import Dict, List, Any, Tuple
 from dataclasses import dataclass
 import math
-from ..models.evaluation import (
-    AnalysisResult, Finding, Severity, Grade, DimensionScores,
+from src.models.evaluation import (
+    AnalysisResult, Finding, Grade, DimensionScores,
     EvaluationSummary, EvaluationReport
 )
-from ..core.interfaces import ScoringSystem
+from src.core.interfaces import ScoringSystem, Severity
 
 
 @dataclass
@@ -95,12 +95,13 @@ class WeightedScoringSystem(ScoringSystem):
             Severity.CRITICAL: 20.0,
             Severity.HIGH: 10.0,
             Severity.MEDIUM: 5.0,
-            Severity.LOW: 2.0,
-            Severity.INFO: 0.5
+            Severity.LOW: 0.5,
+            Severity.INFO: 0.0
         }
-        
+
         total_penalty = 0.0
         for finding in findings:
+            print(severity_weights.get(finding.severity, 0.0))
             total_penalty += severity_weights.get(finding.severity, 0.0)
         
         # Cap penalty at 100.0
@@ -129,15 +130,14 @@ class WeightedScoringSystem(ScoringSystem):
         
         total_score = 0.0
         total_weight = 0.0
-        
         for result in relevant_results:
+            print(result.analyzer)
             # Base score starts at 100 and is reduced by penalties
             base_score = 100.0
-            
             # Apply penalty based on findings
             penalty = self.calculate_severity_penalty(result.findings)
             score = max(0.0, base_score - penalty)
-            
+            # print(result.findings)
             # Weight by analyzer importance for this dimension
             analyzer_weight = self._get_analyzer_weight(result.analyzer, dimension)
             total_score += score * analyzer_weight
@@ -152,7 +152,7 @@ class WeightedScoringSystem(ScoringSystem):
         """Check if analyzer is relevant for a dimension."""
         analyzer_dimensions = {
             "compilation": ["correctness"],
-            "sparse": ["correctness"],
+
             "correctness": ["correctness"],
             "security": ["security"],
             "code_quality": ["code_quality"],
@@ -168,7 +168,7 @@ class WeightedScoringSystem(ScoringSystem):
         weights = {
             "correctness": {
                 "compilation": 0.4,
-                "sparse": 0.3,
+
                 "correctness": 0.3
             },
             "security": {

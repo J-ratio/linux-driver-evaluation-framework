@@ -55,10 +55,6 @@ class CompilationMessage:
         """Generate recommendation based on the compilation message."""
         message_lower = self.message.lower()
         
-        # Sparse-specific recommendations
-        if self.message_type.startswith('sparse_'):
-            return self._get_sparse_recommendation(message_lower)
-        
         # Standard compilation recommendations
         if "undeclared" in message_lower:
             return "Check if the required header files are included or if the identifier is spelled correctly"
@@ -66,37 +62,16 @@ class CompilationMessage:
             return "Include the appropriate header file for this function"
         elif "unused variable" in message_lower:
             return "Remove the unused variable or mark it with __attribute__((unused))"
+        elif "unused parameter" in message_lower:
+            return "Remove the unused parameter or mark it with __attribute__((unused))"
         elif "format" in message_lower:
             return "Check format string and arguments match"
         elif "assignment" in message_lower and "condition" in message_lower:
             return "Use == for comparison or wrap assignment in extra parentheses if intentional"
+        elif "comparison" in message_lower and "always" in message_lower:
+            return "Review the comparison logic - it may always evaluate to the same result"
         else:
             return "Review the compilation message and fix the indicated issue"
-    
-    def _get_sparse_recommendation(self, message_lower: str) -> str:
-        """Generate sparse-specific recommendations."""
-        if "address space" in message_lower:
-            return "Use proper address space annotations (__user, __kernel, __iomem) and appropriate access functions"
-        elif "endian" in message_lower:
-            return "Use proper endianness conversion functions (cpu_to_le32, be32_to_cpu, etc.) for cross-platform compatibility"
-        elif "context" in message_lower and ("lock" in message_lower or "unlock" in message_lower):
-            return "Ensure proper lock/unlock pairing and use appropriate locking primitives for kernel context"
-        elif "context imbalance" in message_lower:
-            return "Check that all code paths properly acquire and release locks, and verify interrupt context handling"
-        elif "null" in message_lower and "dereference" in message_lower:
-            return "Add null pointer checks before dereferencing pointers, especially for user-provided data"
-        elif "uninitialized" in message_lower:
-            return "Initialize variables before use, especially in error paths and conditional branches"
-        elif "cast truncat" in message_lower:
-            return "Verify that cast operations don't lose significant data; use explicit size checks if needed"
-        elif "bitwise" in message_lower:
-            return "Use proper bitwise operations and ensure consistent types for bit manipulation"
-        elif "redeclar" in message_lower or "redefinition" in message_lower:
-            return "Remove duplicate declarations or use proper header guards to prevent multiple definitions"
-        elif "preprocessor" in message_lower or "macro" in message_lower:
-            return "Check macro definitions for conflicts and ensure proper conditional compilation"
-        else:
-            return "Review sparse semantic analysis output and address kernel-specific coding issues"
 
 
 class KernelEnvironment:
@@ -122,52 +97,54 @@ class KernelEnvironment:
             True if setup successful, False otherwise
         """
         try:
-            # Check if Docker is available
+            # Check if Docker is available - REQUIRED, no fallback
             result = subprocess.run(['docker', '--version'], 
                                   capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
-                raise RuntimeError("Docker is not available")
+                raise RuntimeError("Docker is not available. Docker is required for compilation analysis.")
             
             # Check if image already exists
             result = subprocess.run(['docker', 'images', '-q', self.image_name],
                                   capture_output=True, text=True, timeout=30)
             
             if not result.stdout.strip():
-                # Build the image
+                # Build the image - MUST succeed
                 if not self._build_docker_image():
-                    return False
+                    raise RuntimeError("Failed to build Docker image. Compilation analysis cannot proceed.")
             
             self.is_setup = True
             return True
             
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, RuntimeError) as e:
-            print(f"Failed to setup kernel environment: {e}")
-            return False
+            raise RuntimeError(f"Failed to setup kernel environment: {e}. Compilation analysis is mandatory and cannot proceed.")
+    
+
     
     def _build_docker_image(self) -> bool:
         """Build Docker image with kernel headers and build tools."""
         dockerfile_path = "docker/kernel-build/Dockerfile"
         
         if not os.path.exists(dockerfile_path):
-            print(f"Dockerfile not found at {dockerfile_path}")
-            return False
+            raise RuntimeError(f"Dockerfile not found at {dockerfile_path}")
         
         try:
-            # Build the image using the existing Dockerfile
+            print("Building Docker image for compilation analysis...")
+            # Build the image using the main Dockerfile - MUST succeed
             result = subprocess.run([
                 'docker', 'build', '-t', self.image_name, 
                 '-f', dockerfile_path, 'docker/kernel-build'
-            ], capture_output=True, text=True, timeout=600)  # 10 minute timeout
+            ], capture_output=True, text=True, timeout=1800)  # 30 minute timeout
             
-            if result.returncode != 0:
-                print(f"Docker build failed: {result.stderr}")
-                return False
-            
-            return True
-            
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-            print(f"Failed to build Docker image: {e}")
-            return False
+            if result.returncode == 0:
+                print("Docker build successful")
+                return True
+            else:
+                raise RuntimeError(f"Docker build failed: {result.stderr}")
+                
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Docker build timed out after 30 minutes")
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Docker build process failed: {e}")
     
 
     
@@ -184,20 +161,31 @@ class KernelEnvironment:
         """
         if not self.is_setup:
             if not self.setup_environment():
-                return CompilationStatus.ENVIRONMENT_ERROR, "", "Failed to setup compilation environment"
+                raise RuntimeError("Failed to setup compilation environment. Compilation analysis is mandatory.")
+        
+        # Docker compilation only - no fallbacks
+        return self._compile_with_docker(source_files, temp_dir)
+    
+    def _compile_with_docker(self, source_files: List[str], temp_dir: str) -> Tuple[CompilationStatus, str, str]:
+        """Compile using Docker container - simplified version."""
+        # Create Makefile for the driver
+        makefile_path = os.path.join(temp_dir, 'Makefile')
+        self._create_simple_makefile(source_files, makefile_path)
+        
+        # Check if Docker image exists - MUST exist
+        result = subprocess.run(['docker', 'images', '-q', self.image_name],
+                              capture_output=True, text=True, timeout=30)
+        if not result.stdout.strip():
+            raise RuntimeError(f"Docker image {self.image_name} not available. Run setup first.")
         
         try:
-            # Create Makefile for the driver
-            makefile_path = os.path.join(temp_dir, 'Makefile')
-            self._create_makefile(source_files, makefile_path)
-            
             # Run compilation in container
             docker_cmd = [
                 'docker', 'run', '--rm',
                 '-v', f'{temp_dir}:/workspace',
                 '-w', '/workspace',
                 self.image_name,
-                'make', '-j$(nproc)'
+                'make'
             ]
             
             result = subprocess.run(
@@ -207,101 +195,58 @@ class KernelEnvironment:
                 timeout=300  # 5 minute timeout
             )
             
-            # Also run sparse analysis if available
-            sparse_stdout, sparse_stderr = self._run_sparse_analysis(temp_dir, source_files)
-            
-            # Combine outputs
-            combined_stdout = result.stdout + "\n" + sparse_stdout
-            combined_stderr = result.stderr + "\n" + sparse_stderr
-            
-            # Determine status
+            # Determine status based on compilation result
             if result.returncode == 0:
-                if "warning" in combined_stderr.lower():
+                # Compilation succeeded
+                if "warning" in result.stderr.lower() or "warning" in result.stdout.lower():
                     status = CompilationStatus.WARNINGS
                 else:
                     status = CompilationStatus.SUCCESS
             else:
+                # Compilation failed
                 status = CompilationStatus.ERRORS
             
-            return status, combined_stdout, combined_stderr
+            return status, result.stdout, result.stderr
             
         except subprocess.TimeoutExpired:
-            return CompilationStatus.TIMEOUT, "", "Compilation timed out"
+            raise RuntimeError("Docker compilation timed out after 5 minutes")
         except Exception as e:
-            return CompilationStatus.ENVIRONMENT_ERROR, "", f"Compilation failed: {str(e)}"
+            raise RuntimeError(f"Docker compilation failed: {e}")
     
-    def _create_makefile(self, source_files: List[str], makefile_path: str) -> None:
-        """Create Makefile for driver compilation."""
-        template_path = "templates/Makefile.driver"
-        
-        if not os.path.exists(template_path):
-            raise FileNotFoundError(f"Makefile template not found at {template_path}")
-        
+
+    
+    def _create_simple_makefile(self, source_files: List[str], makefile_path: str) -> None:
+        """Create a simple Makefile for driver compilation."""
         # Extract base names without extensions
         obj_files = []
         for source_file in source_files:
             base_name = os.path.splitext(os.path.basename(source_file))[0]
             obj_files.append(f"{base_name}.o")
         
-        # Read template and substitute variables
-        with open(template_path, 'r') as f:
-            template_content = f.read()
-        
-        # Replace template variables
-        makefile_content = template_content.replace('$(OBJECTS)', ' '.join(obj_files))
+        # Create simple Makefile content
+        makefile_content = f"""# Simple kernel module Makefile
+obj-m := {' '.join(obj_files)}
+
+# Use kernel build directory in Docker
+KDIR := /lib/modules/generic/build
+PWD := $(shell pwd)
+
+# Compilation flags
+ccflags-y := -Wall -Wextra
+
+default:
+\t$(MAKE) -C $(KDIR) M=$(PWD) modules
+
+clean:
+\t$(MAKE) -C $(KDIR) M=$(PWD) clean
+
+.PHONY: default clean
+"""
         
         with open(makefile_path, 'w') as f:
             f.write(makefile_content)
     
-    def _run_sparse_analysis(self, temp_dir: str, source_files: List[str]) -> Tuple[str, str]:
-        """Run comprehensive sparse semantic analysis on the source files."""
-        try:
-            # Run multiple sparse analysis passes with different configurations
-            all_stdout = ""
-            all_stderr = ""
-            
-            # Standard sparse analysis
-            stdout, stderr = self._run_sparse_pass(temp_dir, "sparse")
-            all_stdout += stdout + "\n"
-            all_stderr += stderr + "\n"
-            
-            # Enhanced sparse analysis with additional checks
-            stdout, stderr = self._run_sparse_pass(temp_dir, "sparse-enhanced")
-            all_stdout += stdout + "\n"
-            all_stderr += stderr + "\n"
-            
-            # Context-sensitive analysis for locking
-            stdout, stderr = self._run_sparse_pass(temp_dir, "sparse-context")
-            all_stdout += stdout + "\n"
-            all_stderr += stderr + "\n"
-            
-            return all_stdout, all_stderr
-            
-        except Exception as e:
-            return "", f"Sparse analysis failed: {str(e)}"
-    
-    def _run_sparse_pass(self, temp_dir: str, target: str) -> Tuple[str, str]:
-        """Run a specific sparse analysis pass."""
-        try:
-            docker_cmd = [
-                'docker', 'run', '--rm',
-                '-v', f'{temp_dir}:/workspace',
-                '-w', '/workspace',
-                self.image_name,
-                'make', target
-            ]
-            
-            result = subprocess.run(
-                docker_cmd,
-                capture_output=True,
-                text=True,
-                timeout=120  # 2 minute timeout per pass
-            )
-            
-            return result.stdout, result.stderr
-            
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-            return "", f"Sparse pass '{target}' failed or timed out"
+
 
 
 class CompilationMessageParser:
@@ -313,25 +258,7 @@ class CompilationMessageParser:
         r'(?P<type>error|warning|note):\s*(?P<message>.*)'
     )
     
-    # Enhanced sparse message patterns
-    SPARSE_PATTERN = re.compile(
-        r'(?P<file>[^:]+):(?P<line>\d+):(?P<column>\d+):\s*'
-        r'(?P<type>warning|error):\s*(?P<message>.*)'
-    )
-    
-    # Sparse-specific semantic issue patterns for better categorization
-    SPARSE_SEMANTIC_PATTERNS = {
-        'address_space': re.compile(r'incorrect type.*different address spaces'),
-        'endianness': re.compile(r'cast.*different base types|incorrect type.*endianness'),
-        'context_imbalance': re.compile(r'context imbalance|context problem'),
-        'locking': re.compile(r'context.*lock|unlock.*context'),
-        'null_pointer': re.compile(r'dereference.*null|null.*dereference'),
-        'uninitialized': re.compile(r'uninitialized|may be used uninitialized'),
-        'cast_truncation': re.compile(r'cast truncates bits|truncated'),
-        'bitwise_operation': re.compile(r'dubious.*bitwise|bitwise.*different'),
-        'symbol_redeclaration': re.compile(r'symbol.*redeclared|redefinition'),
-        'preprocessor': re.compile(r'preprocessor|macro.*redefined')
-    }
+
     
     def __init__(self):
         """Initialize the parser."""
@@ -353,7 +280,7 @@ class CompilationMessageParser:
         # Parse both stdout and stderr
         combined_output = stdout + "\n" + stderr
         
-        # Parse both stdout and stderr line by line for better control
+        # Parse both stdout and stderr line by line
         lines = combined_output.split('\n')
         
         for line in lines:
@@ -361,20 +288,7 @@ class CompilationMessageParser:
             if not line:
                 continue
             
-            # Determine if this is a sparse message or GCC message
-            # Sparse messages typically come from sparse analysis and have specific patterns
-            is_sparse_message = self._is_sparse_message(line, stdout, stderr)
-            
-            if is_sparse_message:
-                # Try sparse pattern
-                sparse_match = self.SPARSE_PATTERN.match(line)
-                if sparse_match:
-                    message = self._create_sparse_message_from_match(sparse_match)
-                    if message:
-                        self.messages.append(message)
-                    continue
-            
-            # Try GCC pattern for regular compilation messages
+            # Try GCC pattern for compilation messages
             gcc_match = self.GCC_PATTERN.match(line)
             if gcc_match:
                 message = self._create_message_from_match(gcc_match)
@@ -383,47 +297,7 @@ class CompilationMessageParser:
         
         return self.messages
     
-    def _is_sparse_message(self, line: str, stdout: str, stderr: str) -> bool:
-        """Determine if a message line is from sparse analysis."""
-        # Check if the line contains sparse-specific patterns
-        line_lower = line.lower()
-        
-        # Sparse-specific message indicators (more comprehensive)
-        sparse_indicators = [
-            'different address spaces',
-            'cast from restricted',
-            'context imbalance',
-            'noderef expression', 
-            'cast truncates bits',
-            'dubious.*bitwise',
-            'symbol.*redeclared',
-            'incorrect type.*endianness',
-            'restricted.*',
-            'noderef',
-            'context.*lock',
-            'lock.*context',
-            'cast.*restricted',
-            'bitwise.*different',
-            'endian',
-            '__be32',
-            '__le32',
-            '__user',
-            '__kernel',
-            '__iomem'
-        ]
-        
-        # Check for sparse-specific patterns
-        for indicator in sparse_indicators:
-            if re.search(indicator, line_lower):
-                return True
-        
-        # Additional check: if the message contains kernel-specific annotations
-        kernel_annotations = ['__user', '__kernel', '__iomem', '__be32', '__le32', '__be16', '__le16']
-        for annotation in kernel_annotations:
-            if annotation in line:
-                return True
-        
-        return False
+
     
     def _create_message_from_match(self, match) -> Optional[CompilationMessage]:
         """Create CompilationMessage from regex match."""
@@ -455,95 +329,15 @@ class CompilationMessageParser:
         except (ValueError, AttributeError):
             return None
     
-    def _create_sparse_message_from_match(self, match) -> Optional[CompilationMessage]:
-        """Create CompilationMessage from sparse regex match."""
-        try:
-            file_path = match.group('file')
-            line = int(match.group('line'))
-            column = int(match.group('column'))
-            message_type = match.group('type')
-            raw_message = match.group('message').strip()
-            
-            # Categorize sparse message by semantic issue type
-            semantic_category = self._categorize_sparse_message(raw_message)
-            message = f"[sparse:{semantic_category}] {raw_message}"
-            
-            # Determine severity based on semantic category and message type
-            severity = self._get_sparse_severity(semantic_category, message_type, raw_message)
-            
-            return CompilationMessage(
-                file=os.path.basename(file_path),
-                line=line,
-                column=column,
-                message_type=f"sparse_{message_type}",
-                message=message,
-                severity=severity
-            )
-            
-        except (ValueError, AttributeError):
-            return None
-    
-    def _categorize_sparse_message(self, message: str) -> str:
-        """Categorize sparse message by semantic issue type."""
-        message_lower = message.lower()
-        
-        for category, pattern in self.SPARSE_SEMANTIC_PATTERNS.items():
-            if pattern.search(message_lower):
-                return category
-        
-        return "general"
-    
-    def _get_sparse_severity(self, category: str, message_type: str, message: str) -> Severity:
-        """Determine severity based on sparse semantic category."""
-        # Critical issues that can cause kernel crashes or security problems
-        critical_categories = {'null_pointer', 'context_imbalance', 'locking'}
-        
-        # High severity issues that indicate serious problems
-        high_categories = {'address_space', 'uninitialized', 'cast_truncation'}
-        
-        # Medium severity issues that should be addressed
-        medium_categories = {'endianness', 'bitwise_operation', 'symbol_redeclaration'}
-        
-        if message_type == 'error':
-            return Severity.CRITICAL
-        
-        if category in critical_categories:
-            return Severity.CRITICAL
-        elif category in high_categories:
-            return Severity.HIGH
-        elif category in medium_categories:
-            return Severity.MEDIUM
-        else:
-            return Severity.LOW
+
     
     def get_statistics(self) -> Dict[str, int]:
-        """Get comprehensive compilation and sparse analysis statistics."""
+        """Get compilation statistics."""
         stats = {
             'total_messages': len(self.messages),
             'errors': 0,
             'warnings': 0,
-            'notes': 0,
-            'sparse_warnings': 0,
-            'sparse_errors': 0,
-            'sparse_critical': 0,
-            'sparse_high': 0,
-            'sparse_medium': 0,
-            'sparse_low': 0
-        }
-        
-        # Sparse semantic category counts
-        sparse_categories = {
-            'address_space': 0,
-            'endianness': 0,
-            'context_imbalance': 0,
-            'locking': 0,
-            'null_pointer': 0,
-            'uninitialized': 0,
-            'cast_truncation': 0,
-            'bitwise_operation': 0,
-            'symbol_redeclaration': 0,
-            'preprocessor': 0,
-            'general': 0
+            'notes': 0
         }
         
         for message in self.messages:
@@ -553,31 +347,6 @@ class CompilationMessageParser:
                 stats['warnings'] += 1
             elif message.message_type == 'note':
                 stats['notes'] += 1
-            elif message.message_type.startswith('sparse_'):
-                if message.message_type == 'sparse_warning':
-                    stats['sparse_warnings'] += 1
-                elif message.message_type == 'sparse_error':
-                    stats['sparse_errors'] += 1
-                
-                # Count by severity
-                if message.severity == Severity.CRITICAL:
-                    stats['sparse_critical'] += 1
-                elif message.severity == Severity.HIGH:
-                    stats['sparse_high'] += 1
-                elif message.severity == Severity.MEDIUM:
-                    stats['sparse_medium'] += 1
-                elif message.severity == Severity.LOW:
-                    stats['sparse_low'] += 1
-                
-                # Extract category from sparse message
-                if '[sparse:' in message.message:
-                    category = message.message.split('[sparse:')[1].split(']')[0]
-                    if category in sparse_categories:
-                        sparse_categories[category] += 1
-        
-        # Add sparse category counts to stats
-        for category, count in sparse_categories.items():
-            stats[f'sparse_{category}'] = count
         
         return stats
 
@@ -599,7 +368,7 @@ class CompilationAnalyzer(BaseAnalyzer):
     @property
     def name(self) -> str:
         """Return the name of this analyzer."""
-        return "compilation_analyzer"
+        return "compilation"
     
     @property
     def version(self) -> str:
@@ -713,19 +482,28 @@ class CompilationAnalyzer(BaseAnalyzer):
         Returns:
             True if configuration is valid
         """
-        # Check for required Docker
+        # Docker is REQUIRED - no exceptions
         try:
             result = subprocess.run(['docker', '--version'], 
                                   capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
-                return False
+                raise RuntimeError("Docker is required for compilation analysis but is not available")
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
-            return False
+            raise RuntimeError("Docker is required for compilation analysis but is not installed or accessible")
+        
+        # Check if Docker daemon is running
+        try:
+            result = subprocess.run(['docker', 'info'], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                raise RuntimeError("Docker daemon is not running. Please start Docker service.")
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            raise RuntimeError("Docker daemon is not accessible. Please ensure Docker is running and you have permissions.")
         
         # Validate kernel version if specified
         kernel_version = config.get('kernel_version', self.kernel_version)
         if not re.match(r'^\d+\.\d+$', kernel_version):
-            return False
+            raise ValueError(f"Invalid kernel version format: {kernel_version}. Expected format: X.Y")
         
         return True
     
@@ -749,19 +527,23 @@ class CompilationAnalyzer(BaseAnalyzer):
         else:
             base_score = 0.0
         
-        # Deduct points for findings
+        # Deduct points for findings (more reasonable for kernel code)
         deductions = 0.0
         for finding in findings:
             if finding.severity == Severity.CRITICAL:
-                deductions += 20.0
-            elif finding.severity == Severity.HIGH:
                 deductions += 10.0
-            elif finding.severity == Severity.MEDIUM:
+            elif finding.severity == Severity.HIGH:
                 deductions += 5.0
-            elif finding.severity == Severity.LOW:
+            elif finding.severity == Severity.MEDIUM:
                 deductions += 2.0
+            elif finding.severity == Severity.LOW:
+                deductions += 0.5  # Kernel code has many low-severity warnings
         
-        # Cap deductions at base score
+        # Cap deductions to not exceed 50% of base score for warnings-only compilation
+        if status == CompilationStatus.WARNINGS:
+            max_deductions = base_score * 0.5
+            deductions = min(deductions, max_deductions)
+        
         final_score = max(0.0, base_score - deductions)
         return min(100.0, final_score)
     

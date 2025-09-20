@@ -33,8 +33,7 @@ class DefaultConfigurationManager(ConfigurationManager):
             "compilation": {
                 "kernel_version": "5.15",
                 "gcc_flags": ["-Wall", "-Wextra", "-Werror"],
-                "sparse_enabled": True,
-                "sparse_flags": ["-Wbitwise", "-Wcast-to-as"]
+
             },
             "analyzers": {
                 "correctness": {

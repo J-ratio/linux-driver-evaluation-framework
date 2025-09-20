@@ -6,7 +6,8 @@ high-level insights from detailed evaluation reports.
 """
 
 from typing import Dict, Any, List
-from ..models.evaluation import EvaluationReport, Finding, Severity, Grade
+from ..models.evaluation import EvaluationReport, Finding, Grade
+from ..core.interfaces import Severity
 
 
 class SummaryGenerator:

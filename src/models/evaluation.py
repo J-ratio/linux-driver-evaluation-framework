@@ -13,21 +13,14 @@ from enum import Enum
 import json
 import re
 
+from ..core.interfaces import Severity
+
 
 class AnalysisDepth(Enum):
     """Analysis depth levels for evaluation requests."""
     BASIC = "basic"
     STANDARD = "standard"
     COMPREHENSIVE = "comprehensive"
-
-
-class Severity(Enum):
-    """Severity levels for analysis findings."""
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info"
 
 
 class AnalysisStatus(Enum):
