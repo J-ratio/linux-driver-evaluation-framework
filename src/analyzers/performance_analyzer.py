@@ -76,7 +76,7 @@ class PerformanceAnalyzer(BaseAnalyzer):
     @property
     def name(self) -> str:
         """Return the name of this analyzer."""
-        return "performance_analyzer"
+        return "performance"
     
     @property
     def version(self) -> str:

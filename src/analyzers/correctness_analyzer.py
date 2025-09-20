@@ -144,7 +144,7 @@ class CorrectnessAnalyzer(BaseAnalyzer):
     @property
     def name(self) -> str:
         """Return the name of this analyzer."""
-        return "correctness_analyzer"
+        return "correctness"
     
     @property
     def version(self) -> str:

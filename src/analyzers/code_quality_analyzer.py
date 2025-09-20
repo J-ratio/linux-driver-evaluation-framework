@@ -59,10 +59,10 @@ class CodeQualityAnalyzer(BaseAnalyzer):
     
     # Complexity thresholds for different severity levels
     COMPLEXITY_THRESHOLDS = {
-        'low': 5,
-        'medium': 10,
-        'high': 15,
-        'critical': 20
+        'low': 10,
+        'medium': 20,
+        'high': 30,
+        'critical': 40
     }
     
     # Documentation patterns to look for
@@ -88,7 +88,7 @@ class CodeQualityAnalyzer(BaseAnalyzer):
     @property
     def name(self) -> str:
         """Return the name of this analyzer."""
-        return "code_quality_analyzer"
+        return "code_quality"
     
     @property
     def version(self) -> str:
@@ -214,7 +214,7 @@ class CodeQualityAnalyzer(BaseAnalyzer):
             "max_complexity": self.config.max_complexity,
             "min_doc_coverage": self.config.min_doc_coverage
         }
-        
+
         # Run each configured check type
         for check_type in self.config.check_types:
             if check_type == CodeQualityCheckType.ALL:
@@ -461,13 +461,13 @@ if ($errors > 0) {
                 current_finding = {
                     'type': error_match.group(1),
                     'message': error_match.group(2),
-                    'severity': Severity.HIGH
+                    'severity': Severity.LOW
                 }
             elif warning_match:
                 current_finding = {
                     'type': warning_match.group(1),
                     'message': warning_match.group(2),
-                    'severity': Severity.MEDIUM
+                    'severity': Severity.LOW
                 }
             
             # Check for line information
@@ -684,7 +684,7 @@ if ($errors > 0) {
         
         # Check documentation for functions
         for func_name, func_info in functions.items():
-            if not self._has_documentation(content, func_info['start'], 'function'):
+            if not self._has_documentation(content, func_info['start'], 'function') and not ["if", "for"].__contains__(func_name):
                 findings.append(Finding(
                     type="missing_function_doc",
                     severity=Severity.MEDIUM,
@@ -855,7 +855,7 @@ if ($errors > 0) {
             Severity.LOW: 2,
             Severity.INFO: 1
         }
-        
+                
         for finding in findings:
             penalty = severity_penalties.get(finding.severity, 1)
             score -= penalty

@@ -207,7 +207,7 @@ class AdvancedFeaturesAnalyzer(BaseAnalyzer):
     @property
     def name(self) -> str:
         """Return the name of this analyzer."""
-        return "advanced_features_analyzer"
+        return "advanced_features"
     
     @property
     def version(self) -> str:

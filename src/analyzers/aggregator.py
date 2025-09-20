@@ -1,51 +1,45 @@
 """
-Result Aggregation System
+Results aggregation engine for the Linux Driver Evaluation Framework.
 
-This module implements the result aggregation engine that collects and
-normalizes results from multiple analyzers, resolves conflicts, and
-prepares data for scoring.
+This module implements result collection, normalization, and conflict resolution
+for combining outputs from multiple static analysis tools into a unified report.
 """
 
-import logging
-from typing import Dict, List, Any, Set, Tuple
+from typing import Dict, List, Any, Set, Tuple, Optional
+from dataclasses import dataclass, field
 from collections import defaultdict
-from dataclasses import dataclass
-
-from ..core.interfaces import (
-    ResultAggregator, AnalysisResult, Finding, Severity, AnalysisStatus
+import hashlib
+from src.models.evaluation import (
+    AnalysisResult, Finding, Severity, EvaluationReport, 
+    DimensionScores, EvaluationSummary, Grade
 )
+from src.core.interfaces import ResultAggregator
+from .scoring import WeightedScoringSystem
 
 
 @dataclass
-class AggregationConfig:
-    """Configuration for result aggregation."""
-    enable_deduplication: bool = True
-    merge_similar_findings: bool = True
+class ConflictResolutionRule:
+    """Rule for resolving conflicts between overlapping findings."""
+    priority_order: List[str] = field(default_factory=lambda: [
+        "compilation", "security", "correctness", "code_quality", "performance"
+    ])
+    merge_similar: bool = True
     similarity_threshold: float = 0.8
-    severity_weights: Dict[Severity, float] = None
-    
-    def __post_init__(self):
-        if self.severity_weights is None:
-            self.severity_weights = {
-                Severity.CRITICAL: 1.0,
-                Severity.HIGH: 0.8,
-                Severity.MEDIUM: 0.6,
-                Severity.LOW: 0.4,
-                Severity.INFO: 0.2
-            }
 
 
-class StandardResultAggregator(ResultAggregator):
+class EvaluationResultsAggregator(ResultAggregator):
     """
-    Standard implementation of result aggregation.
+    Aggregates and normalizes results from multiple analyzers.
     
-    This aggregator collects results from multiple analyzers, deduplicates
-    findings, resolves conflicts, and normalizes scores.
+    Handles conflict resolution for overlapping findings and provides
+    comprehensive scoring with detailed breakdowns.
     """
     
-    def __init__(self, config: AggregationConfig = None):
-        self.config = config or AggregationConfig()
-        self.logger = logging.getLogger(__name__)
+    def __init__(self, scoring_system: WeightedScoringSystem = None,
+                 conflict_rules: ConflictResolutionRule = None):
+        """Initialize aggregator with scoring system and conflict resolution rules."""
+        self.scoring_system = scoring_system or WeightedScoringSystem()
+        self.conflict_rules = conflict_rules or ConflictResolutionRule()
     
     def aggregate(self, results: List[AnalysisResult]) -> Dict[str, Any]:
         """
@@ -55,50 +49,48 @@ class StandardResultAggregator(ResultAggregator):
             results: List of analysis results to aggregate
             
         Returns:
-            Aggregated results dictionary
+            Aggregated results dictionary with normalized data
         """
         if not results:
-            return self._create_empty_aggregation()
+            return {
+                "analyzers": [],
+                "total_findings": 0,
+                "findings_by_severity": {s.value: 0 for s in Severity},
+                "findings_by_analyzer": {},
+                "compilation_success": True,
+                "dimension_scores": {},
+                "overall_score": 0.0,
+                "grade": Grade.F.value
+            }
         
-        self.logger.info(f"Aggregating results from {len(results)} analyzers")
-        
-        # Separate successful and failed results
-        successful_results = [r for r in results if r.status == AnalysisStatus.SUCCESS]
-        failed_results = [r for r in results if r.status == AnalysisStatus.FAILURE]
-        warning_results = [r for r in results if r.status == AnalysisStatus.WARNING]
-        
-        # Collect all findings
-        all_findings = []
-        for result in successful_results + warning_results:
-            all_findings.extend(result.findings)
-        
-        # Resolve conflicts and deduplicate
+        # Resolve conflicts and deduplicate findings
         deduplicated_findings = self.resolve_conflicts(results)
         
-        # Aggregate metrics
-        aggregated_metrics = self._aggregate_metrics(results)
+        # Calculate dimension scores
+        dimension_scores = self.scoring_system.get_dimension_scores(results)
         
-        # Calculate summary statistics
-        summary_stats = self._calculate_summary_stats(deduplicated_findings, results)
+        # Calculate overall score and grade
+        overall_score = self.scoring_system.calculate_score(results)
+        grade = self.scoring_system.assign_grade(overall_score)
         
-        # Organize findings by category
-        categorized_findings = self._categorize_findings(deduplicated_findings)
+        # Aggregate findings by severity and analyzer
+        findings_by_severity = self._count_findings_by_severity(deduplicated_findings)
+        findings_by_analyzer = self._group_findings_by_analyzer(results)
         
-        aggregation = {
-            "total_analyzers": len(results),
-            "successful_analyzers": len(successful_results),
-            "failed_analyzers": len(failed_results),
-            "warning_analyzers": len(warning_results),
+        # Check compilation status
+        compilation_success = self._check_compilation_success(results)
+        
+        return {
+            "analyzers": [r.analyzer for r in results],
             "total_findings": len(deduplicated_findings),
-            "findings": deduplicated_findings,
-            "categorized_findings": categorized_findings,
-            "metrics": aggregated_metrics,
-            "summary": summary_stats,
-            "analyzer_results": {r.analyzer: r for r in results}
+            "findings_by_severity": findings_by_severity,
+            "findings_by_analyzer": findings_by_analyzer,
+            "compilation_success": compilation_success,
+            "dimension_scores": dimension_scores.to_dict(),
+            "overall_score": overall_score,
+            "grade": grade.value,
+            "deduplicated_findings": deduplicated_findings
         }
-        
-        self.logger.info(f"Aggregation complete: {len(deduplicated_findings)} findings")
-        return aggregation
     
     def resolve_conflicts(self, results: List[AnalysisResult]) -> List[Finding]:
         """
@@ -108,82 +100,76 @@ class StandardResultAggregator(ResultAggregator):
             results: List of analysis results with potential conflicts
             
         Returns:
-            Deduplicated list of findings
+            Deduplicated list of findings with conflicts resolved
         """
-        if not self.config.enable_deduplication:
-            # Return all findings without deduplication
-            all_findings = []
-            for result in results:
-                all_findings.extend(result.findings)
-            return all_findings
+        if not results:
+            return []
         
-        # Group findings by location (file, line, column)
-        location_groups = defaultdict(list)
+        # Collect all findings with their source analyzer
+        all_findings = []
         for result in results:
             for finding in result.findings:
-                location_key = (finding.file, finding.line, finding.column)
-                location_groups[location_key].append((finding, result.analyzer))
+                all_findings.append((finding, result.analyzer))
         
-        deduplicated_findings = []
+        if not all_findings:
+            return []
         
-        for location_key, findings_with_analyzers in location_groups.items():
-            if len(findings_with_analyzers) == 1:
-                # No conflict, add the finding as-is
-                finding, analyzer = findings_with_analyzers[0]
-                deduplicated_findings.append(finding)
-            else:
-                # Multiple findings at same location, resolve conflict
-                resolved_finding = self._resolve_location_conflict(findings_with_analyzers)
-                deduplicated_findings.append(resolved_finding)
+        # Group similar findings
+        finding_groups = self._group_similar_findings(all_findings)
         
-        return deduplicated_findings
+        # Resolve conflicts within each group
+        resolved_findings = []
+        for group in finding_groups:
+            resolved_finding = self._resolve_finding_group(group)
+            if resolved_finding:
+                resolved_findings.append(resolved_finding)
+        
+        return resolved_findings
     
-    def _resolve_location_conflict(
-        self, 
-        findings_with_analyzers: List[Tuple[Finding, str]]
-    ) -> Finding:
-        """Resolve conflict when multiple findings exist at the same location."""
-        findings = [f for f, _ in findings_with_analyzers]
-        analyzers = [a for _, a in findings_with_analyzers]
+    def _group_similar_findings(self, findings_with_analyzer: List[Tuple[Finding, str]]) -> List[List[Tuple[Finding, str]]]:
+        """Group similar findings together for conflict resolution."""
+        groups = []
+        used_indices = set()
         
-        # If findings are similar, merge them
-        if self.config.merge_similar_findings and self._are_findings_similar(findings):
-            return self._merge_similar_findings(findings, analyzers)
+        for i, (finding1, analyzer1) in enumerate(findings_with_analyzer):
+            if i in used_indices:
+                continue
+            
+            # Start a new group with this finding
+            group = [(finding1, analyzer1)]
+            used_indices.add(i)
+            
+            # Find similar findings
+            for j, (finding2, analyzer2) in enumerate(findings_with_analyzer):
+                if j in used_indices or i == j:
+                    continue
+                
+                if self._are_findings_similar(finding1, finding2):
+                    group.append((finding2, analyzer2))
+                    used_indices.add(j)
+            
+            groups.append(group)
         
-        # Otherwise, keep the finding with highest severity
-        highest_severity_finding = max(findings, key=lambda f: self._severity_priority(f.severity))
-        
-        # Add note about multiple analyzers detecting this issue
-        if len(set(analyzers)) > 1:
-            highest_severity_finding.message += f" (Detected by: {', '.join(set(analyzers))})"
-        
-        return highest_severity_finding
+        return groups
     
-    def _are_findings_similar(self, findings: List[Finding]) -> bool:
-        """Check if findings are similar enough to merge."""
-        if len(findings) < 2:
-            return True
+    def _are_findings_similar(self, finding1: Finding, finding2: Finding) -> bool:
+        """Check if two findings are similar enough to be considered duplicates."""
+        # Same file and close line numbers
+        if (finding1.file == finding2.file and 
+            abs(finding1.line - finding2.line) <= 2):
+            
+            # Similar message content or same type
+            similarity = self._calculate_message_similarity(finding1.message, finding2.message)
+            same_type = finding1.type == finding2.type
+            
+            return similarity >= self.conflict_rules.similarity_threshold or same_type
         
-        # Check if all findings have the same type
-        types = set(f.type for f in findings)
-        if len(types) > 1:
-            return False
-        
-        # Check message similarity (simple approach)
-        messages = [f.message.lower() for f in findings]
-        base_message = messages[0]
-        
-        for message in messages[1:]:
-            similarity = self._calculate_message_similarity(base_message, message)
-            if similarity < self.config.similarity_threshold:
-                return False
-        
-        return True
+        return False
     
     def _calculate_message_similarity(self, msg1: str, msg2: str) -> float:
-        """Calculate similarity between two messages (simple implementation)."""
-        words1 = set(msg1.split())
-        words2 = set(msg2.split())
+        """Calculate similarity between two messages using simple word overlap."""
+        words1 = set(msg1.lower().split())
+        words2 = set(msg2.lower().split())
         
         if not words1 and not words2:
             return 1.0
@@ -191,146 +177,215 @@ class StandardResultAggregator(ResultAggregator):
             return 0.0
         
         intersection = words1.intersection(words2)
-        union = words1.union(words2)
         
-        return len(intersection) / len(union)
+        # Use Jaccard similarity but with a bias toward common important words
+        important_words = {'buffer', 'overflow', 'error', 'warning', 'critical', 'security', 'vulnerability'}
+        important_intersection = intersection.intersection(important_words)
+        
+        # Boost similarity if important words match
+        base_similarity = len(intersection) / len(words1.union(words2))
+        if important_intersection:
+            base_similarity = min(1.0, base_similarity + 0.3)
+        
+        return base_similarity
     
-    def _merge_similar_findings(self, findings: List[Finding], analyzers: List[str]) -> Finding:
-        """Merge similar findings into a single finding."""
-        # Use the finding with highest severity as base
-        base_finding = max(findings, key=lambda f: self._severity_priority(f.severity))
+    def _resolve_finding_group(self, group: List[Tuple[Finding, str]]) -> Optional[Finding]:
+        """Resolve conflicts within a group of similar findings."""
+        if not group:
+            return None
         
-        # Combine messages and recommendations
-        unique_messages = list(dict.fromkeys(f.message for f in findings))
-        unique_recommendations = list(dict.fromkeys(f.recommendation for f in findings if f.recommendation))
+        if len(group) == 1:
+            return group[0][0]
         
-        merged_message = "; ".join(unique_messages)
-        merged_recommendation = "; ".join(unique_recommendations)
+        # Sort by analyzer priority
+        priority_map = {analyzer: i for i, analyzer in enumerate(self.conflict_rules.priority_order)}
+        group.sort(key=lambda x: priority_map.get(x[1], len(self.conflict_rules.priority_order)))
         
-        # Add analyzer information
-        unique_analyzers = list(dict.fromkeys(analyzers))
-        if len(unique_analyzers) > 1:
-            merged_message += f" (Detected by: {', '.join(unique_analyzers)})"
+        # Take the finding from the highest priority analyzer
+        primary_finding, primary_analyzer = group[0]
         
-        return Finding(
-            type=base_finding.type,
-            severity=base_finding.severity,
-            file=base_finding.file,
-            line=base_finding.line,
-            column=base_finding.column,
-            message=merged_message,
-            recommendation=merged_recommendation
+        # Merge information from other findings if beneficial
+        merged_finding = self._merge_findings([f for f, a in group], primary_finding)
+        
+        return merged_finding
+    
+    def _merge_findings(self, findings: List[Finding], primary: Finding) -> Finding:
+        """Merge multiple findings into a single comprehensive finding."""
+        # Use primary finding as base
+        merged = Finding(
+            type=primary.type,
+            severity=primary.severity,
+            file=primary.file,
+            line=primary.line,
+            column=primary.column,
+            message=primary.message,
+            recommendation=primary.recommendation
         )
-    
-    def _severity_priority(self, severity: Severity) -> int:
-        """Get numeric priority for severity (higher = more severe)."""
-        priority_map = {
-            Severity.CRITICAL: 5,
-            Severity.HIGH: 4,
-            Severity.MEDIUM: 3,
-            Severity.LOW: 2,
-            Severity.INFO: 1
-        }
-        return priority_map.get(severity, 0)
-    
-    def _aggregate_metrics(self, results: List[AnalysisResult]) -> Dict[str, Any]:
-        """Aggregate metrics from all analyzer results."""
-        aggregated = {
-            "analyzer_scores": {},
-            "execution_times": {},
-            "total_execution_time": 0.0,
-            "analyzer_metrics": {}
-        }
         
+        # Enhance with information from other findings
+        all_recommendations = set()
+        highest_severity = primary.severity
+        
+        for finding in findings:
+            if finding.recommendation:
+                all_recommendations.add(finding.recommendation)
+            
+            # Use highest severity
+            if self._severity_level(finding.severity) > self._severity_level(highest_severity):
+                highest_severity = finding.severity
+        
+        merged.severity = highest_severity
+        
+        # Combine recommendations
+        if all_recommendations:
+            merged.recommendation = "; ".join(sorted(all_recommendations))
+        
+        return merged
+    
+    def _severity_level(self, severity: Severity) -> int:
+        """Convert severity to numeric level for comparison."""
+        levels = {
+            Severity.INFO: 0,
+            Severity.LOW: 1,
+            Severity.MEDIUM: 2,
+            Severity.HIGH: 3,
+            Severity.CRITICAL: 4
+        }
+        return levels.get(severity, 0)
+    
+    def _count_findings_by_severity(self, findings: List[Finding]) -> Dict[str, int]:
+        """Count findings by severity level."""
+        counts = {severity.value: 0 for severity in Severity}
+        for finding in findings:
+            counts[finding.severity.value] += 1
+        return counts
+    
+    def _group_findings_by_analyzer(self, results: List[AnalysisResult]) -> Dict[str, Dict[str, Any]]:
+        """Group findings and metrics by analyzer."""
+        grouped = {}
         for result in results:
-            analyzer_name = result.analyzer
-            aggregated["analyzer_scores"][analyzer_name] = result.score
-            
-            if "execution_time" in result.metrics:
-                exec_time = result.metrics["execution_time"]
-                aggregated["execution_times"][analyzer_name] = exec_time
-                aggregated["total_execution_time"] += exec_time
-            
-            # Store analyzer-specific metrics
-            aggregated["analyzer_metrics"][analyzer_name] = result.metrics
-        
-        return aggregated
+            grouped[result.analyzer] = {
+                "status": result.status.value,
+                "finding_count": len(result.findings),
+                "findings_by_severity": self._count_findings_by_severity(result.findings),
+                "metrics": result.metrics
+            }
+        return grouped
     
-    def _calculate_summary_stats(
-        self, 
-        findings: List[Finding], 
-        results: List[AnalysisResult]
-    ) -> Dict[str, Any]:
-        """Calculate summary statistics for the aggregated results."""
-        severity_counts = defaultdict(int)
-        type_counts = defaultdict(int)
-        file_counts = defaultdict(int)
+    def _check_compilation_success(self, results: List[AnalysisResult]) -> bool:
+        """Check if compilation was successful based on analyzer results."""
+        for result in results:
+            if result.analyzer == "compilation":
+                # Compilation is successful if it's SUCCESS or WARNING (warnings are OK)
+                return result.status.value in ["success", "warning"]
+        return True  # Assume success if no compilation analyzer present
+    
+    def create_comprehensive_report(self, evaluation_id: str, 
+                                  results: List[AnalysisResult]) -> EvaluationReport:
+        """
+        Create a comprehensive evaluation report from analyzer results.
         
-        for finding in findings:
-            severity_counts[finding.severity.value] += 1
-            type_counts[finding.type] += 1
-            file_counts[finding.file] += 1
+        Args:
+            evaluation_id: Unique identifier for this evaluation
+            results: List of analysis results
+            
+        Returns:
+            Complete EvaluationReport object
+        """
+        # Aggregate results
+        aggregated = self.aggregate(results)
         
-        # Calculate weighted severity score
-        weighted_severity_score = 0.0
-        total_findings = len(findings)
+        # Create dimension scores object
+        dimension_scores = DimensionScores.from_dict(aggregated["dimension_scores"])
         
-        if total_findings > 0:
-            for finding in findings:
-                weight = self.config.severity_weights.get(finding.severity, 0.0)
-                weighted_severity_score += weight
-            weighted_severity_score /= total_findings
+        # Create summary
+        summary = EvaluationSummary(
+            total_issues=aggregated["total_findings"],
+            critical_issues=aggregated["findings_by_severity"].get("critical", 0),
+            compilation_status=aggregated["compilation_success"]
+        )
+        
+        # Generate recommendations
+        recommendations = self.scoring_system.generate_recommendations(results)
+        
+        # Create final report
+        report = EvaluationReport(
+            evaluation_id=evaluation_id,
+            overall_score=aggregated["overall_score"],
+            grade=Grade(aggregated["grade"]),
+            dimension_scores=dimension_scores,
+            summary=summary,
+            detailed_findings=aggregated.get("deduplicated_findings", []),
+            recommendations=recommendations
+        )
+        
+        return report
+    
+    def get_detailed_breakdown(self, results: List[AnalysisResult]) -> Dict[str, Any]:
+        """
+        Get detailed breakdown of scoring and analysis results.
+        
+        Args:
+            results: List of analysis results
+            
+        Returns:
+            Detailed breakdown dictionary
+        """
+        aggregated = self.aggregate(results)
+        
+        # Calculate per-analyzer contributions
+        analyzer_contributions = {}
+        for result in results:
+            analyzer_contributions[result.analyzer] = {
+                "findings": len(result.findings),
+                "critical_findings": len([f for f in result.findings if f.severity == Severity.CRITICAL]),
+                "weight_in_scoring": self._calculate_analyzer_weight(result.analyzer),
+                "status": result.status.value
+            }
+        
+        # Calculate dimension breakdowns
+        dimension_breakdown = {}
+        dimension_scores = DimensionScores.from_dict(aggregated["dimension_scores"])
+        
+        for dimension, score in dimension_scores.to_dict().items():
+            weight = self.scoring_system.weights[dimension]
+            contribution = score * weight
+            dimension_breakdown[dimension] = {
+                "score": score,
+                "weight": weight,
+                "contribution_to_overall": contribution,
+                "grade": self.scoring_system.assign_grade(score).value
+            }
         
         return {
-            "total_findings": total_findings,
-            "severity_counts": dict(severity_counts),
-            "type_counts": dict(type_counts),
-            "files_with_issues": len(file_counts),
-            "file_issue_counts": dict(file_counts),
-            "weighted_severity_score": weighted_severity_score,
-            "most_common_issue_type": max(type_counts.items(), key=lambda x: x[1])[0] if type_counts else None,
-            "most_problematic_file": max(file_counts.items(), key=lambda x: x[1])[0] if file_counts else None
+            "overall_score": aggregated["overall_score"],
+            "overall_grade": aggregated["grade"],
+            "dimension_breakdown": dimension_breakdown,
+            "analyzer_contributions": analyzer_contributions,
+            "conflict_resolution_stats": {
+                "original_findings": sum(len(r.findings) for r in results),
+                "deduplicated_findings": aggregated["total_findings"],
+                "conflicts_resolved": sum(len(r.findings) for r in results) - aggregated["total_findings"]
+            }
         }
     
-    def _categorize_findings(self, findings: List[Finding]) -> Dict[str, List[Finding]]:
-        """Organize findings by category/type."""
-        categories = defaultdict(list)
-        
-        for finding in findings:
-            # Categorize by type
-            categories[finding.type].append(finding)
-            
-            # Also categorize by severity
-            severity_category = f"severity_{finding.severity.value}"
-            categories[severity_category].append(finding)
-        
-        return dict(categories)
-    
-    def _create_empty_aggregation(self) -> Dict[str, Any]:
-        """Create empty aggregation result when no results are provided."""
-        return {
-            "total_analyzers": 0,
-            "successful_analyzers": 0,
-            "failed_analyzers": 0,
-            "warning_analyzers": 0,
-            "total_findings": 0,
-            "findings": [],
-            "categorized_findings": {},
-            "metrics": {
-                "analyzer_scores": {},
-                "execution_times": {},
-                "total_execution_time": 0.0,
-                "analyzer_metrics": {}
-            },
-            "summary": {
-                "total_findings": 0,
-                "severity_counts": {},
-                "type_counts": {},
-                "files_with_issues": 0,
-                "file_issue_counts": {},
-                "weighted_severity_score": 0.0,
-                "most_common_issue_type": None,
-                "most_problematic_file": None
-            },
-            "analyzer_results": {}
+    def _calculate_analyzer_weight(self, analyzer_name: str) -> float:
+        """Calculate the overall weight of an analyzer in the scoring system."""
+        # This is a simplified calculation - in practice, this would be more complex
+        analyzer_dimension_map = {
+            "compilation": ["correctness"],
+
+            "correctness": ["correctness"],
+            "security": ["security"],
+            "code_quality": ["code_quality"],
+            "performance": ["performance"],
+            "advanced_features": ["advanced_features"]
         }
+        
+        dimensions = analyzer_dimension_map.get(analyzer_name, [])
+        total_weight = 0.0
+        
+        for dimension in dimensions:
+            total_weight += self.scoring_system.weights.get(dimension, 0.0)
+        
+        return total_weight

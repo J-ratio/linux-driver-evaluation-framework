@@ -173,7 +173,7 @@ class SecurityScanner(BaseAnalyzer):
     @property
     def name(self) -> str:
         """Return the name of this analyzer."""
-        return "security_analyzer"
+        return "security"
     
     @property
     def version(self) -> str:
