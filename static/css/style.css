@@ -1,0 +1,409 @@
+/* Custom styles for Linux Driver Evaluation Framework */
+
+:root {
+    --primary-color: #0d6efd;
+    --success-color: #198754;
+    --warning-color: #ffc107;
+    --danger-color: #dc3545;
+    --info-color: #0dcaf0;
+    --dark-color: #212529;
+}
+
+body {
+    background-color: #f8f9fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Drop zone styling */
+.drop-zone {
+    transition: all 0.3s ease;
+    cursor: pointer;
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.drop-zone:hover {
+    border-color: var(--primary-color) !important;
+    background-color: rgba(13, 110, 253, 0.05);
+}
+
+.drop-zone.dragover {
+    border-color: var(--primary-color) !important;
+    background-color: rgba(13, 110, 253, 0.1);
+    transform: scale(1.02);
+}
+
+/* File list styling */
+.file-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    margin-bottom: 0.5rem;
+    background-color: white;
+}
+
+.file-item:hover {
+    background-color: #f8f9fa;
+}
+
+.file-info {
+    display: flex;
+    align-items: center;
+}
+
+.file-icon {
+    color: var(--primary-color);
+    margin-right: 0.5rem;
+}
+
+.file-size {
+    color: #6c757d;
+    font-size: 0.875rem;
+    margin-left: 0.5rem;
+}
+
+.remove-file {
+    color: var(--danger-color);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 0.25rem;
+    transition: background-color 0.2s;
+}
+
+.remove-file:hover {
+    background-color: rgba(220, 53, 69, 0.1);
+}
+
+/* Progress bar enhancements */
+.progress {
+    height: 1.5rem;
+    border-radius: 0.5rem;
+}
+
+.progress-bar {
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+/* Status badges */
+.status-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.375rem 0.75rem;
+    border-radius: 1rem;
+}
+
+.status-completed {
+    background-color: var(--success-color);
+    color: white;
+}
+
+.status-running {
+    background-color: var(--info-color);
+    color: white;
+}
+
+.status-failed {
+    background-color: var(--danger-color);
+    color: white;
+}
+
+.status-pending {
+    background-color: var(--warning-color);
+    color: black;
+}
+
+/* Grade badges */
+.grade-badge {
+    font-size: 1rem;
+    font-weight: bold;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    min-width: 3rem;
+    text-align: center;
+}
+
+.grade-A {
+    background-color: #28a745;
+    color: white;
+}
+
+.grade-B {
+    background-color: #17a2b8;
+    color: white;
+}
+
+.grade-C {
+    background-color: #ffc107;
+    color: black;
+}
+
+.grade-D {
+    background-color: #fd7e14;
+    color: white;
+}
+
+.grade-F {
+    background-color: #dc3545;
+    color: white;
+}
+
+/* Score display */
+.score-display {
+    font-size: 1.25rem;
+    font-weight: bold;
+    color: var(--primary-color);
+}
+
+/* Card enhancements */
+.card {
+    border: none;
+    border-radius: 0.75rem;
+}
+
+.card-header {
+    border-radius: 0.75rem 0.75rem 0 0 !important;
+    border-bottom: none;
+    font-weight: 600;
+}
+
+/* Table enhancements */
+.table th {
+    border-top: none;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.875rem;
+    letter-spacing: 0.5px;
+}
+
+.table-hover tbody tr:hover {
+    background-color: rgba(13, 110, 253, 0.05);
+}
+
+/* Button enhancements */
+.btn {
+    border-radius: 0.5rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Animation classes */
+.fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.slide-in {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(-20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .drop-zone {
+        min-height: 150px;
+    }
+    
+    .file-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .file-info {
+        margin-bottom: 0.5rem;
+    }
+}
+
+/* Loading spinner */
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* Footer */
+footer {
+    margin-top: auto;
+}
+
+/* Sample driver buttons */
+.sample-driver-btn {
+    transition: all 0.3s ease;
+    border-width: 2px;
+    min-height: 70px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.sample-driver-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.sample-driver-btn small {
+    font-size: 0.75rem;
+    margin-top: 2px;
+}
+
+.sample-driver-btn.loading {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+/* Sample drivers section */
+.sample-drivers-section {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid #dee2e6;
+}
+
+/* Navbar enhancements */
+.navbar-brand {
+    font-weight: 600;
+    font-size: 1.25rem;
+}
+
+.navbar-nav .nav-link {
+    font-weight: 500;
+    transition: color 0.2s ease;
+}
+
+.navbar-nav .nav-link:hover {
+    color: var(--info-color) !important;
+}
+
+/* Enhanced findings view */
+.findings-category-header {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.findings-category-header:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+.findings-category-header .fa-chevron-down {
+    transition: transform 0.3s ease;
+}
+
+.findings-category-header[aria-expanded="false"] .fa-chevron-down {
+    transform: rotate(-90deg);
+}
+
+.finding-message {
+    line-height: 1.5;
+    margin: 0.5rem 0;
+}
+
+.alert .badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* Severity-specific styling */
+.alert-danger {
+    border-left: 4px solid var(--danger-color);
+}
+
+.alert-warning {
+    border-left: 4px solid var(--warning-color);
+}
+
+.alert-info {
+    border-left: 4px solid var(--info-color);
+}
+
+.alert-secondary {
+    border-left: 4px solid #6c757d;
+}
+
+.alert-light {
+    border-left: 4px solid #f8f9fa;
+    border-color: #dee2e6;
+}
+
+/* Category icons */
+.category-icon {
+    width: 1.25rem;
+    text-align: center;
+}
+
+/* Collapsible findings sections */
+.findings-section .card {
+    border: 1px solid #dee2e6;
+    margin-bottom: 0.75rem;
+}
+
+.findings-section .card-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    padding: 0.75rem 1rem;
+}
+
+.findings-section .card-body {
+    padding: 1rem;
+}
+
+/* Empty state for findings */
+.findings-empty {
+    text-align: center;
+    padding: 2rem;
+    color: #6c757d;
+}
+
+.findings-empty i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+/* Responsive findings view */
+@media (max-width: 768px) {
+    .findings-section .alert {
+        padding: 0.75rem;
+    }
+    
+    .findings-section .alert .d-flex {
+        flex-direction: column;
+        align-items: flex-start !important;
+    }
+    
+    .findings-section .badge {
+        margin-top: 0.5rem;
+        margin-left: 0 !important;
+    }
+}
