@@ -86,6 +86,54 @@
                         <div id="fileList" class="list-group"></div>
                     </div>
 
+                    <!-- Target Architecture Selection -->
+                    <div class="mb-4">
+                        <label for="architectureSelect" class="form-label">
+                            <i class="fas fa-microchip me-2"></i>Target Architecture
+                        </label>
+                        <select id="architectureSelect" class="form-select">
+                            <option value="">Loading architectures...</option>
+                        </select>
+                        <div class="form-text">
+                            Select the target CPU architecture for compilation. Different architectures may require different toolchains.
+                        </div>
+                        <div id="architectureInfo" class="mt-2" style="display: none;">
+                            <div class="card border-info">
+                                <div class="card-body py-2">
+                                    <small class="text-muted">
+                                        <strong>Description:</strong> <span id="archDescription"></span><br>
+                                        <strong>Cross-compile prefix:</strong> <span id="archCrossCompile"></span><br>
+                                        <strong>Headers package:</strong> <span id="archHeaders"></span>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Kernel Version Selection -->
+                    <div class="mb-4">
+                        <label for="kernelVersionSelect" class="form-label">
+                            <i class="fas fa-cog me-2"></i>Target Kernel Version
+                        </label>
+                        <select id="kernelVersionSelect" class="form-select">
+                            <option value="">Loading kernel versions...</option>
+                        </select>
+                        <div class="form-text">
+                            Select the Linux kernel version to compile against. Different versions may have different APIs and requirements.
+                        </div>
+                        <div id="kernelVersionInfo" class="mt-2" style="display: none;">
+                            <div class="card border-info">
+                                <div class="card-body py-2">
+                                    <small class="text-muted">
+                                        <strong>Description:</strong> <span id="kernelDescription"></span><br>
+                                        <strong>Base Image:</strong> <span id="kernelDockerImage"></span><br>
+                                        <strong>Headers:</strong> <span id="kernelHeaders"></span>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Submit Button -->
                     <div class="d-grid">
                         <button type="submit" id="submitBtn" class="btn btn-primary btn-lg" disabled>

@@ -81,6 +81,7 @@ class SourceFile:
 class EvaluationConfiguration:
     """Configuration settings for an evaluation request."""
     kernel_version: str = "5.15"
+    target_architecture: str = "x86_64"
     analysis_depth: AnalysisDepth = AnalysisDepth.STANDARD
     custom_rules: Dict[str, Any] = field(default_factory=dict)
     
@@ -88,6 +89,7 @@ class EvaluationConfiguration:
         """Convert to dictionary for JSON serialization."""
         return {
             "kernel_version": self.kernel_version,
+            "target_architecture": self.target_architecture,
             "analysis_depth": self.analysis_depth.value,
             "custom_rules": self.custom_rules
         }
@@ -97,6 +99,7 @@ class EvaluationConfiguration:
         """Create instance from dictionary."""
         return cls(
             kernel_version=data.get("kernel_version", "5.15"),
+            target_architecture=data.get("target_architecture", "x86_64"),
             analysis_depth=AnalysisDepth(data.get("analysis_depth", "standard")),
             custom_rules=data.get("custom_rules", {})
         )
@@ -108,6 +111,11 @@ class EvaluationConfiguration:
         # Validate kernel version format (e.g., "5.15", "6.1")
         if not re.match(r'^\d+\.\d+$', self.kernel_version):
             errors.append("Invalid kernel version format (expected: X.Y)")
+        
+        # Validate target architecture
+        valid_architectures = ["x86_64", "arm64", "arm", "riscv64"]
+        if self.target_architecture not in valid_architectures:
+            errors.append(f"Invalid target architecture. Must be one of: {', '.join(valid_architectures)}")
         
         return errors
 

@@ -7,9 +7,15 @@ class FileUploadManager {
         this.selectedFiles = new Map();
         this.currentEvaluationId = null;
         this.progressInterval = null;
+        this.kernelVersions = [];
+        this.selectedKernelVersion = null;
+        this.architectures = [];
+        this.selectedArchitecture = null;
         
         this.initializeElements();
         this.setupEventListeners();
+        this.loadArchitectures();
+        this.loadKernelVersions();
     }
 
     initializeElements() {
@@ -27,6 +33,20 @@ class FileUploadManager {
         this.errorSection = document.getElementById('errorSection');
         this.errorMessage = document.getElementById('errorMessage');
         this.viewResultsBtn = document.getElementById('viewResultsBtn');
+        
+        // Architecture elements
+        this.architectureSelect = document.getElementById('architectureSelect');
+        this.architectureInfo = document.getElementById('architectureInfo');
+        this.archDescription = document.getElementById('archDescription');
+        this.archCrossCompile = document.getElementById('archCrossCompile');
+        this.archHeaders = document.getElementById('archHeaders');
+        
+        // Kernel version elements
+        this.kernelVersionSelect = document.getElementById('kernelVersionSelect');
+        this.kernelVersionInfo = document.getElementById('kernelVersionInfo');
+        this.kernelDescription = document.getElementById('kernelDescription');
+        this.kernelDockerImage = document.getElementById('kernelDockerImage');
+        this.kernelHeaders = document.getElementById('kernelHeaders');
     }
 
     setupEventListeners() {
@@ -76,6 +96,16 @@ class FileUploadManager {
         // Clear samples button
         document.getElementById('clearSamplesBtn').addEventListener('click', () => {
             this.clearSampleDrivers();
+        });
+
+        // Architecture selection
+        this.architectureSelect.addEventListener('change', (e) => {
+            this.handleArchitectureChange(e.target.value);
+        });
+
+        // Kernel version selection
+        this.kernelVersionSelect.addEventListener('change', (e) => {
+            this.handleKernelVersionChange(e.target.value);
         });
     }
 
@@ -155,6 +185,16 @@ class FileUploadManager {
             this.selectedFiles.forEach((file) => {
                 formData.append('files', file);
             });
+            
+            // Add kernel version if selected
+            if (this.selectedKernelVersion) {
+                formData.append('kernel_version', this.selectedKernelVersion);
+            }
+            
+            // Add target architecture if selected
+            if (this.selectedArchitecture) {
+                formData.append('target_architecture', this.selectedArchitecture);
+            }
 
             // Submit files
             const response = await fetch('/api/submit', {
@@ -368,6 +408,152 @@ class FileUploadManager {
         
         // Reset sample driver buttons
         this.clearSampleDrivers();
+    }
+
+    async loadKernelVersions() {
+        try {
+            const response = await fetch('/api/kernel-versions');
+            const data = await response.json();
+            
+            if (data.status === 'ok') {
+                this.kernelVersions = data.available_versions;
+                this.populateKernelVersionSelect(data.current_version);
+            } else {
+                console.error('Failed to load kernel versions:', data);
+                this.showKernelVersionError('Failed to load kernel versions');
+            }
+        } catch (error) {
+            console.error('Error loading kernel versions:', error);
+            this.showKernelVersionError('Error loading kernel versions');
+        }
+    }
+
+    populateKernelVersionSelect(currentVersion) {
+        // Clear existing options
+        this.kernelVersionSelect.innerHTML = '';
+        
+        // Add options for each kernel version
+        this.kernelVersions.forEach(versionInfo => {
+            const option = document.createElement('option');
+            option.value = versionInfo.version;
+            option.textContent = `${versionInfo.version} - ${versionInfo.description}`;
+            
+            if (versionInfo.is_current || versionInfo.version === currentVersion) {
+                option.selected = true;
+                this.selectedKernelVersion = versionInfo.version;
+                this.showKernelVersionInfo(versionInfo);
+            }
+            
+            this.kernelVersionSelect.appendChild(option);
+        });
+        
+        // If no version was selected, select the first one
+        if (!this.selectedKernelVersion && this.kernelVersions.length > 0) {
+            this.selectedKernelVersion = this.kernelVersions[0].version;
+            this.kernelVersionSelect.value = this.selectedKernelVersion;
+            this.showKernelVersionInfo(this.kernelVersions[0]);
+        }
+    }
+
+    handleKernelVersionChange(selectedVersion) {
+        this.selectedKernelVersion = selectedVersion;
+        
+        const versionInfo = this.kernelVersions.find(v => v.version === selectedVersion);
+        if (versionInfo) {
+            this.showKernelVersionInfo(versionInfo);
+        } else {
+            this.hideKernelVersionInfo();
+        }
+    }
+
+    showKernelVersionInfo(versionInfo) {
+        this.kernelDescription.textContent = versionInfo.description;
+        this.kernelDockerImage.textContent = versionInfo.docker_image;
+        this.kernelHeaders.textContent = versionInfo.headers_package;
+        this.kernelVersionInfo.style.display = 'block';
+    }
+
+    hideKernelVersionInfo() {
+        this.kernelVersionInfo.style.display = 'none';
+    }
+
+    showKernelVersionError(message) {
+        this.kernelVersionSelect.innerHTML = `<option value="">${message}</option>`;
+        this.kernelVersionSelect.disabled = true;
+        this.hideKernelVersionInfo();
+    }
+
+    async loadArchitectures() {
+        try {
+            const response = await fetch('/api/architectures');
+            const data = await response.json();
+            
+            if (data.status === 'ok') {
+                this.architectures = data.available_architectures;
+                this.populateArchitectureSelect(data.current_architecture);
+            } else {
+                console.error('Failed to load architectures:', data);
+                this.showArchitectureError('Failed to load architectures');
+            }
+        } catch (error) {
+            console.error('Error loading architectures:', error);
+            this.showArchitectureError('Error loading architectures');
+        }
+    }
+
+    populateArchitectureSelect(currentArchitecture) {
+        // Clear existing options
+        this.architectureSelect.innerHTML = '';
+        
+        // Add options for each architecture
+        this.architectures.forEach(archInfo => {
+            const option = document.createElement('option');
+            option.value = archInfo.architecture;
+            option.textContent = `${archInfo.architecture} - ${archInfo.description}`;
+            
+            if (archInfo.is_current || archInfo.architecture === currentArchitecture) {
+                option.selected = true;
+                this.selectedArchitecture = archInfo.architecture;
+                this.showArchitectureInfo(archInfo);
+            }
+            
+            this.architectureSelect.appendChild(option);
+        });
+        
+        // If no architecture was selected, select the first one
+        if (!this.selectedArchitecture && this.architectures.length > 0) {
+            this.selectedArchitecture = this.architectures[0].architecture;
+            this.architectureSelect.value = this.selectedArchitecture;
+            this.showArchitectureInfo(this.architectures[0]);
+        }
+    }
+
+    handleArchitectureChange(selectedArchitecture) {
+        this.selectedArchitecture = selectedArchitecture;
+        
+        const archInfo = this.architectures.find(a => a.architecture === selectedArchitecture);
+        if (archInfo) {
+            this.showArchitectureInfo(archInfo);
+        } else {
+            this.hideArchitectureInfo();
+        }
+    }
+
+    showArchitectureInfo(archInfo) {
+        this.archDescription.textContent = archInfo.description;
+        this.archCrossCompile.textContent = archInfo.cross_compile_prefix || 'None (native compilation)';
+        this.archHeaders.textContent = archInfo.headers_package || 'linux-headers-generic';
+        this.architectureInfo.style.display = 'block';
+    }
+
+    hideArchitectureInfo() {
+        this.architectureInfo.style.display = 'none';
+    }
+
+    showArchitectureError(message) {
+        this.architectureSelect.innerHTML = `<option value="">${message}</option>`;
+        this.architectureSelect.disabled = true;
+        this.hideArchitectureInfo();
     }
 }
 

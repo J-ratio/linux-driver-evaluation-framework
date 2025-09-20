@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from src.models.evaluation import EvaluationRequest, EvaluationReport, SourceFile
 from .pipeline import AnalysisPipeline
 from src.services.validation import ValidationService
+from src.config.manager import DefaultConfigurationManager
 import warnings
 
 warnings.filterwarnings('ignore', category=UserWarning, message="Pydantic serializer warnings.*")
@@ -70,7 +71,9 @@ async def results_page(request: Request):
 @app.post("/api/submit")
 async def submit_code(
     background_tasks: BackgroundTasks,
-    files: List[UploadFile] = File(...)
+    files: List[UploadFile] = File(...),
+    kernel_version: Optional[str] = None,
+    target_architecture: Optional[str] = None
 ):
     """Submit driver code files for evaluation."""
     if not files:
@@ -111,9 +114,48 @@ async def submit_code(
     
     # Create evaluation request
     evaluation_id = str(uuid.uuid4())
+    
+    # Handle kernel version and architecture selection
+    config_manager = DefaultConfigurationManager()
+    config = config_manager.load_config()
+    
+    if kernel_version:
+        # Validate the provided kernel version
+        available_versions = config_manager.get_available_kernel_versions()
+        if kernel_version not in available_versions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported kernel version '{kernel_version}'. Available: {available_versions}"
+            )
+        selected_kernel_version = kernel_version
+    else:
+        # Use default kernel version from config
+        selected_kernel_version = config.get("compilation", {}).get("kernel_version", "5.15")
+    
+    if target_architecture:
+        # Validate the provided architecture
+        available_architectures = config.get("compilation", {}).get("available_architectures", ["x86_64"])
+        if target_architecture not in available_architectures:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported architecture '{target_architecture}'. Available: {available_architectures}"
+            )
+        selected_architecture = target_architecture
+    else:
+        # Use default architecture from config
+        selected_architecture = config.get("compilation", {}).get("target_architecture", "x86_64")
+    
+    # Create evaluation configuration
+    from src.models.evaluation import EvaluationConfiguration
+    eval_config = EvaluationConfiguration(
+        kernel_version=selected_kernel_version,
+        target_architecture=selected_architecture
+    )
+    
     evaluation_request = EvaluationRequest(
         id=evaluation_id,
-        source_files=source_files
+        source_files=source_files,
+        configuration=eval_config
     )
     
     # Initialize status tracking
@@ -243,6 +285,198 @@ async def get_analyzer_status():
             "error": str(e),
             "pipeline_type": "fallback"
         }
+
+
+@app.get("/api/kernel-versions")
+async def get_kernel_versions():
+    """Get available kernel versions."""
+    try:
+        config_manager = DefaultConfigurationManager()
+        available_versions = config_manager.get_available_kernel_versions()
+        current_version = config_manager.load_config().get("compilation", {}).get("kernel_version", "5.15")
+        compilation_config = config_manager.load_config().get("compilation", {})
+        version_configs = compilation_config.get("kernel_version_configs", {})
+        
+        versions_info = []
+        for version in available_versions:
+            config = version_configs.get(version, {})
+            versions_info.append({
+                "version": version,
+                "description": config.get("description", f"Kernel {version}"),
+                "docker_image": config.get("docker_image", "ubuntu:22.04"),
+                "headers_package": config.get("headers_package", "linux-headers-generic"),
+                "is_current": version == current_version
+            })
+        
+        return {
+            "status": "ok",
+            "current_version": current_version,
+            "available_versions": versions_info
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting kernel versions: {str(e)}")
+
+
+@app.post("/api/kernel-versions/set")
+async def set_kernel_version(request: dict):
+    """Set the default kernel version."""
+    try:
+        version = request.get("version")
+        if not version:
+            raise HTTPException(status_code=400, detail="Version is required")
+        
+        config_manager = DefaultConfigurationManager()
+        available_versions = config_manager.get_available_kernel_versions()
+        
+        if version not in available_versions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported kernel version '{version}'. Available: {available_versions}"
+            )
+        
+        # Load and update config
+        config = config_manager.load_config()
+        config["compilation"]["kernel_version"] = version
+        
+        # Save config
+        if not config_manager.save_config(config):
+            raise HTTPException(status_code=500, detail="Failed to save configuration")
+        
+        # Get version info
+        kernel_config = config_manager.get_kernel_version_config(version)
+        
+        return {
+            "status": "ok",
+            "message": f"Successfully set default kernel version to {version}",
+            "version_info": {
+                "version": version,
+                "description": kernel_config["description"],
+                "docker_image": kernel_config["docker_image"],
+                "headers_package": kernel_config["headers_package"]
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error setting kernel version: {str(e)}")
+
+
+@app.get("/api/kernel-versions/{version}")
+async def get_kernel_version_info(version: str):
+    """Get detailed information about a specific kernel version."""
+    try:
+        config_manager = DefaultConfigurationManager()
+        available_versions = config_manager.get_available_kernel_versions()
+        
+        if version not in available_versions:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Kernel version '{version}' not found. Available: {available_versions}"
+            )
+        
+        kernel_config = config_manager.get_kernel_version_config(version)
+        current_version = config_manager.load_config().get("compilation", {}).get("kernel_version", "5.15")
+        
+        return {
+            "status": "ok",
+            "version_info": {
+                "version": version,
+                "description": kernel_config["description"],
+                "docker_image": kernel_config["docker_image"],
+                "headers_package": kernel_config["headers_package"],
+                "is_current": version == current_version
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting kernel version info: {str(e)}")
+
+
+@app.get("/api/architectures")
+async def get_architectures():
+    """Get available target architectures."""
+    try:
+        config_manager = DefaultConfigurationManager()
+        config = config_manager.load_config()
+        compilation_config = config.get("compilation", {})
+        
+        available_architectures = compilation_config.get("available_architectures", ["x86_64"])
+        current_architecture = compilation_config.get("target_architecture", "x86_64")
+        cross_compile_toolchains = compilation_config.get("cross_compile_toolchains", {})
+        
+        architectures_info = []
+        arch_descriptions = {
+            "x86_64": "Intel/AMD 64-bit (x86_64)",
+            "arm64": "ARM 64-bit (AArch64)",
+            "arm": "ARM 32-bit",
+            "riscv64": "RISC-V 64-bit"
+        }
+        
+        for arch in available_architectures:
+            architectures_info.append({
+                "architecture": arch,
+                "description": arch_descriptions.get(arch, f"{arch} architecture"),
+                "cross_compile_prefix": cross_compile_toolchains.get(arch, ""),
+                "is_current": arch == current_architecture
+            })
+        
+        return {
+            "status": "ok",
+            "current_architecture": current_architecture,
+            "available_architectures": architectures_info
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting architectures: {str(e)}")
+
+
+@app.post("/api/architectures/set")
+async def set_target_architecture(request: dict):
+    """Set the default target architecture."""
+    try:
+        architecture = request.get("architecture")
+        if not architecture:
+            raise HTTPException(status_code=400, detail="Architecture is required")
+        
+        config_manager = DefaultConfigurationManager()
+        config = config_manager.load_config()
+        available_architectures = config.get("compilation", {}).get("available_architectures", ["x86_64"])
+        
+        if architecture not in available_architectures:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported architecture '{architecture}'. Available: {available_architectures}"
+            )
+        
+        # Update config
+        config["compilation"]["target_architecture"] = architecture
+        
+        # Save config
+        if not config_manager.save_config(config):
+            raise HTTPException(status_code=500, detail="Failed to save configuration")
+        
+        # Get architecture info
+        cross_compile_toolchains = config.get("compilation", {}).get("cross_compile_toolchains", {})
+        arch_descriptions = {
+            "x86_64": "Intel/AMD 64-bit (x86_64)",
+            "arm64": "ARM 64-bit (AArch64)",
+            "arm": "ARM 32-bit",
+            "riscv64": "RISC-V 64-bit"
+        }
+        
+        return {
+            "status": "ok",
+            "message": f"Successfully set default target architecture to {architecture}",
+            "architecture_info": {
+                "architecture": architecture,
+                "description": arch_descriptions.get(architecture, f"{architecture} architecture"),
+                "cross_compile_prefix": cross_compile_toolchains.get(architecture, "")
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error setting target architecture: {str(e)}")
 
 
 async def run_evaluation(evaluation_request: EvaluationRequest):
