@@ -1,0 +1,71 @@
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ${BASE_IMAGE}
+
+# Build arguments
+ARG KERNEL_VERSION=5.15
+ARG HEADERS_PACKAGE=linux-headers-generic
+ARG TARGET_ARCH=x86_64
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build tools and kernel development packages
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    make \
+    ${HEADERS_PACKAGE} \
+    linux-source \
+    sparse \
+    coccinelle \
+    git \
+    wget \
+    curl \
+    kmod \
+    bc \
+    flex \
+    bison \
+    libssl-dev \
+    libelf-dev \
+    gcc-aarch64-linux-gnu \
+    gcc-arm-linux-gnueabihf \
+    gcc-riscv64-linux-gnu \
+    libc6-dev-arm64-cross \
+    libc6-dev-armhf-cross \
+    libc6-dev-riscv64-cross \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up kernel build environment for the specific version
+RUN mkdir -p /lib/modules/${KERNEL_VERSION} && \
+    if [ -d "/usr/src/linux-headers-${KERNEL_VERSION}"* ]; then \
+        KERNEL_DIR=$(ls -d /usr/src/linux-headers-${KERNEL_VERSION}* | head -1); \
+    else \
+        KERNEL_DIR=$(ls -d /usr/src/linux-headers-*-generic | head -1); \
+    fi && \
+    ln -sf $KERNEL_DIR /lib/modules/${KERNEL_VERSION}/build && \
+    echo "Kernel ${KERNEL_VERSION} build directory: /lib/modules/${KERNEL_VERSION}/build -> $KERNEL_DIR" && \
+    ls -la /lib/modules/${KERNEL_VERSION}/build/Makefile
+
+# Create working directory
+WORKDIR /workspace
+
+# Set up kernel build environment variables
+ENV ARCH=${TARGET_ARCH}
+ENV KDIR=/lib/modules/${KERNEL_VERSION}/build
+ENV KERNEL_VERSION=${KERNEL_VERSION}
+
+# Set cross-compilation environment based on architecture
+RUN case "${TARGET_ARCH}" in \
+    "arm64") echo "export CROSS_COMPILE=aarch64-linux-gnu-" >> /etc/environment ;; \
+    "arm") echo "export CROSS_COMPILE=arm-linux-gnueabihf-" >> /etc/environment ;; \
+    "riscv64") echo "export CROSS_COMPILE=riscv64-linux-gnu-" >> /etc/environment ;; \
+    *) echo "export CROSS_COMPILE=" >> /etc/environment ;; \
+    esac
+
+# Add kernel version info
+RUN echo "Kernel Version: ${KERNEL_VERSION}" > /etc/kernel-version && \
+    echo "Headers Package: ${HEADERS_PACKAGE}" >> /etc/kernel-version && \
+    echo "Base Image: ${BASE_IMAGE}" >> /etc/kernel-version && \
+    echo "Target Architecture: ${TARGET_ARCH}" >> /etc/kernel-version
+
+CMD ["/bin/bash"]

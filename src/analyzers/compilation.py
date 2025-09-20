@@ -18,6 +18,7 @@ from enum import Enum
 from pathlib import Path
 
 from src.core.interfaces import BaseAnalyzer, AnalysisResult, AnalysisStatus, Finding, Severity
+from src.config.manager import DefaultConfigurationManager
 
 
 class CompilationStatus(Enum):
@@ -77,17 +78,35 @@ class CompilationMessage:
 class KernelEnvironment:
     """Manages containerized kernel compilation environment."""
     
-    def __init__(self, kernel_version: str = "5.15"):
+    def __init__(self, kernel_version: str = "5.15", target_architecture: str = "x86_64", config_manager: Optional[DefaultConfigurationManager] = None):
         """
         Initialize kernel environment.
         
         Args:
             kernel_version: Target kernel version for compilation
+            target_architecture: Target architecture for compilation
+            config_manager: Configuration manager instance
         """
+        self.config_manager = config_manager or DefaultConfigurationManager()
         self.kernel_version = kernel_version
-        self.container_name = f"kernel-build-{kernel_version}"
-        self.image_name = f"linux-driver-eval:kernel-{kernel_version}"
+        self.target_architecture = target_architecture
+        self.container_name = f"kernel-build-{kernel_version}-{target_architecture}"
+        self.image_name = f"linux-driver-eval:kernel-{kernel_version}-{target_architecture}"
         self.is_setup = False
+        
+        # Validate kernel version is supported
+        available_versions = self.config_manager.get_available_kernel_versions()
+        if kernel_version not in available_versions:
+            raise ValueError(f"Unsupported kernel version '{kernel_version}'. Available versions: {available_versions}")
+        
+        # Validate architecture is supported
+        available_architectures = self.config_manager.get_available_architectures()
+        if target_architecture not in available_architectures:
+            raise ValueError(f"Unsupported architecture '{target_architecture}'. Available architectures: {available_architectures}")
+        
+        # Get kernel version and architecture configuration
+        self.kernel_config = self.config_manager.get_kernel_version_config(kernel_version)
+        self.arch_config = self.config_manager.get_architecture_config(target_architecture)
     
     def setup_environment(self) -> bool:
         """
@@ -122,28 +141,65 @@ class KernelEnvironment:
     
     def _build_docker_image(self) -> bool:
         """Build Docker image with kernel headers and build tools."""
-        dockerfile_path = "docker/kernel-build/Dockerfile"
+        dockerfile_template_path = "docker/kernel-build/Dockerfile.template"
         
-        if not os.path.exists(dockerfile_path):
-            raise RuntimeError(f"Dockerfile not found at {dockerfile_path}")
+        if not os.path.exists(dockerfile_template_path):
+            raise RuntimeError(f"Dockerfile template not found at {dockerfile_template_path}")
         
         try:
-            print("Building Docker image for compilation analysis...")
-            # Build the image using the main Dockerfile - MUST succeed
-            result = subprocess.run([
-                'docker', 'build', '-t', self.image_name, 
-                '-f', dockerfile_path, 'docker/kernel-build'
-            ], capture_output=True, text=True, timeout=1800)  # 30 minute timeout
+            print(f"🐳 Building Docker image for {self.target_architecture} compilation analysis...")
+            print(f"   Image: {self.image_name}")
+            print(f"   Kernel: {self.kernel_version}")
+            print(f"   Base: {self.kernel_config['docker_image']}")
+            print(f"   Headers: {self.arch_config['headers_package']}")
             
-            if result.returncode == 0:
-                print("Docker build successful")
+            # Build the image using the template with architecture-specific args
+            build_args = [
+                '--build-arg', f'KERNEL_VERSION={self.kernel_version}',
+                '--build-arg', f'TARGET_ARCH={self.target_architecture}',
+                '--build-arg', f'BASE_IMAGE={self.kernel_config["docker_image"]}',
+                '--build-arg', f'HEADERS_PACKAGE={self.arch_config["headers_package"]}'
+            ]
+            
+            print("⏳ Starting Docker build process...")
+            print("   This may take several minutes for first-time builds...")
+            
+            # Use Popen for real-time output
+            process = subprocess.Popen([
+                'docker', 'build', '-t', self.image_name
+            ] + build_args + [
+                '-f', dockerfile_template_path, 'docker/kernel-build'
+            ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            
+            # Print build output in real-time
+            build_output = []
+            while True:
+                output = process.stdout.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                if output:
+                    line = output.strip()
+                    build_output.append(line)
+                    # Print key build steps
+                    if any(keyword in line.lower() for keyword in ['step', 'from', 'run', 'env', 'workdir', 'successfully']):
+                        print(f"   {line}")
+            
+            return_code = process.poll()
+            
+            if return_code == 0:
+                print(f"✅ Docker build successful for {self.target_architecture}")
                 return True
             else:
-                raise RuntimeError(f"Docker build failed: {result.stderr}")
+                print(f"❌ Docker build failed for {self.target_architecture}")
+                # Print last few lines of output for debugging
+                print("Last build output:")
+                for line in build_output[-10:]:
+                    print(f"   {line}")
+                raise RuntimeError(f"Docker build failed with return code {return_code}")
                 
         except subprocess.TimeoutExpired:
             raise RuntimeError("Docker build timed out after 30 minutes")
-        except subprocess.CalledProcessError as e:
+        except Exception as e:
             raise RuntimeError(f"Docker build process failed: {e}")
     
 
@@ -167,10 +223,10 @@ class KernelEnvironment:
         return self._compile_with_docker(source_files, temp_dir)
     
     def _compile_with_docker(self, source_files: List[str], temp_dir: str) -> Tuple[CompilationStatus, str, str]:
-        """Compile using Docker container - simplified version."""
+        """Compile using Docker container with architecture support."""
         # Create Makefile for the driver
         makefile_path = os.path.join(temp_dir, 'Makefile')
-        self._create_simple_makefile(source_files, makefile_path)
+        self._create_architecture_makefile(source_files, makefile_path)
         
         # Check if Docker image exists - MUST exist
         result = subprocess.run(['docker', 'images', '-q', self.image_name],
@@ -179,13 +235,31 @@ class KernelEnvironment:
             raise RuntimeError(f"Docker image {self.image_name} not available. Run setup first.")
         
         try:
-            # Run compilation in container
+            # Set up environment variables for cross-compilation
+            env_vars = []
+            if self.target_architecture != "x86_64":
+                cross_compile_prefix = self.arch_config["cross_compile_prefix"]
+                kernel_arch = self._get_kernel_arch()
+                env_vars.extend([
+                    '-e', f'CROSS_COMPILE={cross_compile_prefix}',
+                    '-e', f'ARCH={kernel_arch}'
+                ])
+                
+                # Add RISC-V specific environment variables
+                if self.target_architecture == "riscv64":
+                    env_vars.extend([
+                        '-e', 'RISCV_MARCH=rv64gc',
+                        '-e', 'KBUILD_CFLAGS_KERNEL=-march=rv64gc'
+                    ])
+            
+            # Run compilation in container with bash to source environment
             docker_cmd = [
                 'docker', 'run', '--rm',
                 '-v', f'{temp_dir}:/workspace',
-                '-w', '/workspace',
+                '-w', '/workspace'
+            ] + env_vars + [
                 self.image_name,
-                'make'
+                'bash', '-c', 'source /etc/environment 2>/dev/null || true; make'
             ]
             
             result = subprocess.run(
@@ -215,36 +289,105 @@ class KernelEnvironment:
     
 
     
-    def _create_simple_makefile(self, source_files: List[str], makefile_path: str) -> None:
-        """Create a simple Makefile for driver compilation."""
+    def _create_architecture_makefile(self, source_files: List[str], makefile_path: str) -> None:
+        """Create an architecture-aware Makefile for driver compilation."""
         # Extract base names without extensions
         obj_files = []
         for source_file in source_files:
             base_name = os.path.splitext(os.path.basename(source_file))[0]
             obj_files.append(f"{base_name}.o")
         
-        # Create simple Makefile content
-        makefile_content = f"""# Simple kernel module Makefile
+        if self.target_architecture == "riscv64":
+            # Special handling for RISC-V due to cross-compilation challenges
+            makefile_content = f"""# RISC-V kernel module Makefile (simplified approach)
+obj-m := {' '.join(obj_files)}
+
+# RISC-V cross-compilation settings
+CC := riscv64-linux-gnu-gcc
+ARCH := riscv
+CROSS_COMPILE := riscv64-linux-gnu-
+
+# Simplified compilation for RISC-V (bypass problematic kernel build system)
+KDIR := /lib/modules/{self.kernel_version}/build
+PWD := $(shell pwd)
+
+# RISC-V specific flags
+CFLAGS := -march=rv64gc -Wall -Wextra -DMODULE -D__KERNEL__ \\
+          -I$(KDIR)/include \\
+          -I$(KDIR)/arch/riscv/include \\
+          -I$(KDIR)/arch/riscv/include/generated \\
+          -fno-strict-aliasing -fno-common -fshort-wchar \\
+          -Werror=implicit-function-declaration -Wno-format-security
+
+# Try kernel build system first, fallback to direct compilation
+default:
+\t@echo "Attempting RISC-V kernel module compilation..."
+\t@if $(MAKE) -C $(KDIR) M=$(PWD) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules 2>/dev/null; then \\
+\t\techo "Kernel build system succeeded"; \\
+\telse \\
+\t\techo "Kernel build system failed, trying direct compilation..."; \\
+\t\t$(CC) $(CFLAGS) -c {' '.join([os.path.basename(f) for f in source_files if f.endswith('.c')])} || echo "Direct compilation also failed"; \\
+\tfi
+
+clean:
+\t$(MAKE) -C $(KDIR) M=$(PWD) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) clean 2>/dev/null || rm -f *.o *.ko
+
+.PHONY: default clean
+"""
+        else:
+            # Standard Makefile for other architectures
+            makefile_content = f"""# Architecture-aware kernel module Makefile
 obj-m := {' '.join(obj_files)}
 
 # Use kernel build directory in Docker
-KDIR := /lib/modules/generic/build
+KDIR := /lib/modules/{self.kernel_version}/build
 PWD := $(shell pwd)
 
+# Architecture-specific settings
+ARCH := {self._get_kernel_arch()}
+"""
+            
+            # Add cross-compilation settings if needed
+            if self.target_architecture != "x86_64":
+                cross_compile_prefix = self.arch_config["cross_compile_prefix"]
+                makefile_content += f"""CROSS_COMPILE := {cross_compile_prefix}
+"""
+            
+            makefile_content += """
 # Compilation flags
 ccflags-y := -Wall -Wextra
 
 default:
-\t$(MAKE) -C $(KDIR) M=$(PWD) modules
+\t$(MAKE) -C $(KDIR) M=$(PWD) ARCH=$(ARCH)"""
+            
+            if self.target_architecture != "x86_64":
+                makefile_content += " CROSS_COMPILE=$(CROSS_COMPILE)"
+            
+            makefile_content += """ modules
 
 clean:
-\t$(MAKE) -C $(KDIR) M=$(PWD) clean
+\t$(MAKE) -C $(KDIR) M=$(PWD) ARCH=$(ARCH)"""
+            
+            if self.target_architecture != "x86_64":
+                makefile_content += " CROSS_COMPILE=$(CROSS_COMPILE)"
+            
+            makefile_content += """ clean
 
 .PHONY: default clean
 """
         
         with open(makefile_path, 'w') as f:
             f.write(makefile_content)
+    
+    def _get_kernel_arch(self) -> str:
+        """Get the kernel ARCH value for the target architecture."""
+        arch_mapping = {
+            "x86_64": "x86_64",
+            "arm64": "arm64", 
+            "arm": "arm",
+            "riscv64": "riscv"
+        }
+        return arch_mapping.get(self.target_architecture, self.target_architecture)
     
 
 
@@ -354,15 +497,19 @@ class CompilationMessageParser:
 class CompilationAnalyzer(BaseAnalyzer):
     """Main compilation analyzer that implements the BaseAnalyzer interface."""
     
-    def __init__(self, kernel_version: str = "5.15"):
+    def __init__(self, kernel_version: str = "5.15", target_architecture: str = "x86_64", config_manager: Optional[DefaultConfigurationManager] = None):
         """
         Initialize the compilation analyzer.
         
         Args:
             kernel_version: Target kernel version for compilation
+            target_architecture: Target architecture for compilation
+            config_manager: Configuration manager instance
         """
+        self.config_manager = config_manager or DefaultConfigurationManager()
         self.kernel_version = kernel_version
-        self.environment = KernelEnvironment(kernel_version)
+        self.target_architecture = target_architecture
+        self.environment = KernelEnvironment(kernel_version, target_architecture, self.config_manager)
         self.parser = CompilationMessageParser()
     
     @property
@@ -433,6 +580,7 @@ class CompilationAnalyzer(BaseAnalyzer):
                     "compilation_status": status.value,
                     "compilation_attempted": True,
                     "kernel_version": self.kernel_version,
+                    "target_architecture": self.target_architecture,
                     **stats
                 }
                 

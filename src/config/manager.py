@@ -32,8 +32,27 @@ class DefaultConfigurationManager(ConfigurationManager):
             },
             "compilation": {
                 "kernel_version": "5.15",
+                "available_kernel_versions": [
+                    "5.4", "5.10", "5.15", "6.1", "6.6"
+                ],
+                "kernel_version_configs": {
+                    "5.4": {
+                        "description": "Long Term Support (LTS) - Ubuntu 20.04 default",
+                        "docker_image": "ubuntu:20.04",
+                        "headers_package": "linux-headers-5.4.0-generic"
+                    },
+                    "5.15": {
+                        "description": "Long Term Support (LTS) - Ubuntu 22.04 default", 
+                        "docker_image": "ubuntu:22.04",
+                        "headers_package": "linux-headers-generic"
+                    },
+                    "6.6": {
+                        "description": "Long Term Support (LTS) - Latest",
+                        "docker_image": "ubuntu:24.04", 
+                        "headers_package": "linux-headers-generic"
+                    }
+                },
                 "gcc_flags": ["-Wall", "-Wextra", "-Werror"],
-
             },
             "analyzers": {
                 "correctness": {
@@ -156,12 +175,75 @@ class DefaultConfigurationManager(ConfigurationManager):
             if not isinstance(system_config["max_file_size_mb"], (int, float)) or system_config["max_file_size_mb"] <= 0:
                 return False
         
+        # Validate kernel version selection
+        compilation_config = config.get("compilation", {})
+        if "kernel_version" in compilation_config:
+            kernel_version = compilation_config["kernel_version"]
+            available_versions = compilation_config.get("available_kernel_versions", [])
+            if available_versions and kernel_version not in available_versions:
+                return False
+        
         return True
     
     def get_analyzer_config(self, analyzer_name: str) -> Dict[str, Any]:
         """Get configuration specific to an analyzer."""
         config = self.load_config()
         return config.get("analyzers", {}).get(analyzer_name, {})
+    
+    def get_kernel_version_config(self, kernel_version: Optional[str] = None) -> Dict[str, Any]:
+        """Get configuration for a specific kernel version."""
+        config = self.load_config()
+        compilation_config = config.get("compilation", {})
+        
+        # Use provided version or default
+        version = kernel_version or compilation_config.get("kernel_version", "5.15")
+        
+        # Get version-specific config
+        version_configs = compilation_config.get("kernel_version_configs", {})
+        version_config = version_configs.get(version, {})
+        
+        return {
+            "version": version,
+            "description": version_config.get("description", f"Kernel {version}"),
+            "docker_image": version_config.get("docker_image", "ubuntu:22.04"),
+            "headers_package": version_config.get("headers_package", "linux-headers-generic")
+        }
+    
+    def get_available_kernel_versions(self) -> list:
+        """Get list of available kernel versions."""
+        config = self.load_config()
+        return config.get("compilation", {}).get("available_kernel_versions", ["5.15"])
+    
+    def get_available_architectures(self) -> list:
+        """Get list of available target architectures."""
+        config = self.load_config()
+        return config.get("compilation", {}).get("available_architectures", ["x86_64"])
+    
+    def get_architecture_config(self, architecture: Optional[str] = None) -> Dict[str, Any]:
+        """Get configuration for a specific target architecture."""
+        config = self.load_config()
+        compilation_config = config.get("compilation", {})
+        
+        # Use provided architecture or default
+        arch = architecture or compilation_config.get("target_architecture", "x86_64")
+        
+        # Get architecture-specific config
+        cross_compile_toolchains = compilation_config.get("cross_compile_toolchains", {})
+        arch_specific_headers = compilation_config.get("arch_specific_headers", {})
+        
+        arch_descriptions = {
+            "x86_64": "Intel/AMD 64-bit (x86_64)",
+            "arm64": "ARM 64-bit (AArch64)",
+            "arm": "ARM 32-bit",
+            "riscv64": "RISC-V 64-bit"
+        }
+        
+        return {
+            "architecture": arch,
+            "description": arch_descriptions.get(arch, f"{arch} architecture"),
+            "cross_compile_prefix": cross_compile_toolchains.get(arch, ""),
+            "headers_package": arch_specific_headers.get(arch, "linux-headers-generic")
+        }
     
     def _merge_configs(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively merge two configuration dictionaries."""

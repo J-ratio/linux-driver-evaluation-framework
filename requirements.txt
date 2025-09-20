@@ -1,30 +1,33 @@
-# Core dependencies for Linux Driver Evaluation Framework
+# Linux Driver Evaluation Framework Dependencies
 
-# Configuration and data handling
-pydantic>=1.10.0
-pyyaml>=6.0
-click>=8.0.0
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
 
-# Static analysis tools (will be installed separately)
-# clang-tools (system package)
-# sparse (system package) 
-# coccinelle (system package)
+# Data Validation and Models
+pydantic>=2.4.0
 
-# Web framework for API
-fastapi>=0.95.0
-uvicorn>=0.20.0
+# CLI Framework
+click>=8.1.0
+
+# Template Engine
+jinja2>=3.1.0
+
+# HTTP Client (for testing)
+requests>=2.31.0
+
+# File Upload Handling
 python-multipart>=0.0.6
 
-# Report generation
-jinja2>=3.1.0
-weasyprint>=58.0  # for PDF generation
+# Static Files
+aiofiles>=23.2.0
 
-# Testing
-pytest>=7.0.0
+# Development and Testing (optional)
+pytest>=7.4.0
 pytest-asyncio>=0.21.0
-pytest-cov>=4.0.0
+pytest-cov>=4.1.0
 
-# Development tools
-black>=23.0.0
-flake8>=6.0.0
-mypy>=1.0.0
+# Code Quality (optional)
+black>=23.9.0
+flake8>=6.1.0
+mypy>=1.6.0

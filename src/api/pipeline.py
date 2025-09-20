@@ -29,9 +29,8 @@ class AnalysisPipeline:
         """Initialize the real analysis pipeline."""
         self.logger = logging.getLogger(__name__)
         
-        # Initialize analyzers
+        # Initialize non-compilation analyzers (compilation analyzer is created dynamically)
         self.analyzers = {
-            'compilation': CompilationAnalyzer(),
             'correctness': CorrectnessAnalyzer(),
             'security': SecurityScanner(),
             'code_quality': CodeQualityAnalyzer(),
@@ -47,6 +46,7 @@ class AnalysisPipeline:
         self.default_config = {
             'compilation': {
                 'kernel_version': '5.15',
+                'target_architecture': 'x86_64',
                 'enable_warnings': True
             },
             'correctness': {
@@ -99,11 +99,23 @@ class AnalysisPipeline:
                 if progress_callback:
                     progress_callback(10, "Source files prepared")
                 
+                # Create compilation analyzer with correct architecture
+                compilation_analyzer = CompilationAnalyzer(
+                    kernel_version=evaluation_request.configuration.kernel_version,
+                    target_architecture=evaluation_request.configuration.target_architecture
+                )
+                
+                # Create complete analyzer list with compilation analyzer
+                all_analyzers = {
+                    'compilation': compilation_analyzer,
+                    **self.analyzers
+                }
+                
                 # Run analyzers sequentially with progress updates
                 analysis_results = []
-                total_analyzers = len(self.analyzers)
+                total_analyzers = len(all_analyzers)
                 
-                for i, (analyzer_name, analyzer) in enumerate(self.analyzers.items()):
+                for i, (analyzer_name, analyzer) in enumerate(all_analyzers.items()):
                     try:
                         self.logger.info(f"Running {analyzer_name} analyzer")
                         
@@ -113,6 +125,11 @@ class AnalysisPipeline:
                         
                         # Get analyzer configuration
                         config = self.default_config.get(analyzer_name, {})
+                        
+                        # Add evaluation-specific configuration
+                        if analyzer_name == 'compilation':
+                            config['kernel_version'] = evaluation_request.configuration.kernel_version
+                            config['target_architecture'] = evaluation_request.configuration.target_architecture
                         
                         # Run analyzer (in thread pool to avoid blocking)
                         result = await asyncio.get_event_loop().run_in_executor(

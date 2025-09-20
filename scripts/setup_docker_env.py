@@ -9,7 +9,8 @@ in the Linux Driver Evaluation Framework.
 import subprocess
 import sys
 import os
-from typing import Tuple, Optional
+import json
+from typing import Tuple, Optional, Dict, Any
 
 
 def check_docker_availability() -> Tuple[bool, str]:
@@ -41,6 +42,34 @@ def check_docker_availability() -> Tuple[bool, str]:
         return False, f"Error checking Docker: {str(e)}"
 
 
+def load_kernel_config() -> Dict[str, Any]:
+    """Load kernel version configuration from config file."""
+    config_path = "config/default.json"
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+        return config.get("compilation", {})
+    except Exception as e:
+        print(f"Warning: Could not load config from {config_path}: {e}")
+        return {}
+
+
+def get_kernel_version_info(kernel_version: str) -> Dict[str, str]:
+    """Get configuration info for a specific kernel version."""
+    compilation_config = load_kernel_config()
+    version_configs = compilation_config.get("kernel_version_configs", {})
+    
+    if kernel_version in version_configs:
+        return version_configs[kernel_version]
+    
+    # Fallback to default configuration
+    return {
+        "description": f"Kernel {kernel_version}",
+        "docker_image": "ubuntu:22.04",
+        "headers_package": "linux-headers-generic"
+    }
+
+
 def build_kernel_image(kernel_version: str = "5.15") -> Tuple[bool, str]:
     """
     Build the kernel compilation Docker image.
@@ -52,6 +81,7 @@ def build_kernel_image(kernel_version: str = "5.15") -> Tuple[bool, str]:
         Tuple of (success, message)
     """
     image_name = f"linux-driver-eval:kernel-{kernel_version}"
+    dockerfile_template = "docker/kernel-build/Dockerfile.template"
     dockerfile_path = "docker/kernel-build/Dockerfile"
     
     # Check if image already exists
@@ -65,19 +95,36 @@ def build_kernel_image(kernel_version: str = "5.15") -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Error checking existing image: {str(e)}"
     
-    # Check if Dockerfile exists
-    if not os.path.exists(dockerfile_path):
-        return False, f"Dockerfile not found at {dockerfile_path}"
+    # Get kernel version configuration
+    kernel_info = get_kernel_version_info(kernel_version)
+    base_image = kernel_info.get("docker_image", "ubuntu:22.04")
+    headers_package = kernel_info.get("headers_package", "linux-headers-generic")
+    
+    # Check if template exists, otherwise use existing Dockerfile
+    if os.path.exists(dockerfile_template):
+        dockerfile_to_use = dockerfile_template
+    elif os.path.exists(dockerfile_path):
+        dockerfile_to_use = dockerfile_path
+    else:
+        return False, f"No Dockerfile found at {dockerfile_template} or {dockerfile_path}"
     
     try:
         print(f"Building Docker image {image_name}...")
+        print(f"Kernel version: {kernel_version} ({kernel_info.get('description', '')})")
+        print(f"Base image: {base_image}")
+        print(f"Headers package: {headers_package}")
         print("This may take several minutes...")
         
-        # Build the image using the existing Dockerfile
-        result = subprocess.run([
-            'docker', 'build', '-t', image_name, 
-            '-f', dockerfile_path, 'docker/kernel-build'
-        ], capture_output=True, text=True, timeout=1200)  # 20 minute timeout
+        # Build the image with build arguments
+        build_args = [
+            'docker', 'build', '-t', image_name,
+            '--build-arg', f'BASE_IMAGE={base_image}',
+            '--build-arg', f'KERNEL_VERSION={kernel_version}',
+            '--build-arg', f'HEADERS_PACKAGE={headers_package}',
+            '-f', dockerfile_to_use, 'docker/kernel-build'
+        ]
+        
+        result = subprocess.run(build_args, capture_output=True, text=True, timeout=1200)  # 20 minute timeout
         
         if result.returncode != 0:
             return False, f"Docker build failed: {result.stderr}"
@@ -182,6 +229,19 @@ clean:
         return False, f"Error testing compilation: {str(e)}"
 
 
+def list_available_kernel_versions():
+    """List available kernel versions from configuration."""
+    compilation_config = load_kernel_config()
+    available_versions = compilation_config.get("available_kernel_versions", ["5.15"])
+    version_configs = compilation_config.get("kernel_version_configs", {})
+    
+    print("\nAvailable kernel versions:")
+    for version in available_versions:
+        config = version_configs.get(version, {})
+        description = config.get("description", f"Kernel {version}")
+        print(f"  {version}: {description}")
+
+
 def main():
     """Main setup function."""
     print("Linux Driver Evaluation Framework - Docker Environment Setup")
@@ -198,10 +258,25 @@ def main():
         print("Visit: https://docs.docker.com/get-docker/")
         sys.exit(1)
     
+    # Handle command line arguments
+    if len(sys.argv) > 1 and sys.argv[1] in ['--list', '-l']:
+        list_available_kernel_versions()
+        return
+    
     # Get kernel version
-    kernel_version = "5.15"
+    compilation_config = load_kernel_config()
+    available_versions = compilation_config.get("available_kernel_versions", ["5.15"])
+    default_version = compilation_config.get("kernel_version", "5.15")
+    
+    kernel_version = default_version
     if len(sys.argv) > 1:
-        kernel_version = sys.argv[1]
+        requested_version = sys.argv[1]
+        if requested_version in available_versions:
+            kernel_version = requested_version
+        else:
+            print(f"\nERROR: Kernel version '{requested_version}' is not supported.")
+            list_available_kernel_versions()
+            sys.exit(1)
     
     print(f"\n2. Building kernel compilation image (kernel {kernel_version})...")
     build_success, build_message = build_kernel_image(kernel_version)
@@ -224,6 +299,7 @@ def main():
     print("Setup complete!")
     print(f"Docker image: linux-driver-eval:kernel-{kernel_version}")
     print("You can now use the compilation analyzer.")
+    print(f"\nTo use this kernel version, set 'kernel_version': '{kernel_version}' in your config.")
 
 
 if __name__ == "__main__":

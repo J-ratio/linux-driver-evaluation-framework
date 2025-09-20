@@ -7,8 +7,62 @@
   },
   "compilation": {
     "kernel_version": "5.15",
-    "gcc_flags": ["-Wall", "-Wextra", "-Werror"],
-
+    "available_kernel_versions": [
+      "5.4",
+      "5.10",
+      "5.15",
+      "6.1",
+      "6.6"
+    ],
+    "kernel_version_configs": {
+      "5.4": {
+        "description": "Long Term Support (LTS) - Ubuntu 20.04 default",
+        "docker_image": "ubuntu:20.04",
+        "headers_package": "linux-headers-5.4.0-generic"
+      },
+      "5.15": {
+        "description": "Long Term Support (LTS) - Ubuntu 22.04 default",
+        "docker_image": "ubuntu:22.04",
+        "headers_package": "linux-headers-generic"
+      },
+      "6.6": {
+        "description": "Long Term Support (LTS) - Latest",
+        "docker_image": "ubuntu:24.04",
+        "headers_package": "linux-headers-generic"
+      },
+      "5.10": {
+        "description": "Long Term Support (LTS) - Debian 11 default",
+        "docker_image": "ubuntu:20.04",
+        "headers_package": "linux-headers-5.10.0-generic"
+      },
+      "6.1": {
+        "description": "Long Term Support (LTS) - Debian 12 default",
+        "docker_image": "ubuntu:22.04",
+        "headers_package": "linux-headers-6.1.0-generic"
+      }
+    },
+    "gcc_flags": [
+      "-Wall",
+      "-Wextra",
+      "-Werror"
+    ],
+    "target_architecture": "x86_64",
+    "available_architectures": [
+      "x86_64",
+      "riscv64"
+    ],
+    "cross_compile_toolchains": {
+      "x86_64": "",
+      "arm64": "aarch64-linux-gnu-",
+      "arm": "arm-linux-gnueabihf-",
+      "riscv64": "riscv64-linux-gnu-"
+    },
+    "arch_specific_headers": {
+      "x86_64": "linux-headers-generic",
+      "arm64": "linux-headers-generic",
+      "arm": "linux-headers-generic",
+      "riscv64": "linux-headers-generic"
+    }
   },
   "analyzers": {
     "correctness": {
@@ -25,7 +79,10 @@
       "flawfinder_min_level": 2,
       "smatch_enabled": true,
       "dangerous_functions": [
-        "strcpy", "sprintf", "gets", "strcat"
+        "strcpy",
+        "sprintf",
+        "gets",
+        "strcat"
       ]
     },
     "code_quality": {
@@ -48,10 +105,10 @@
   },
   "scoring": {
     "weights": {
-      "correctness": 0.40,
+      "correctness": 0.4,
       "security": 0.25,
-      "code_quality": 0.20,
-      "performance": 0.10,
+      "code_quality": 0.2,
+      "performance": 0.1,
       "advanced_features": 0.05
     },
     "grade_thresholds": {
@@ -59,11 +116,16 @@
       "B": 80.0,
       "C": 70.0,
       "D": 60.0,
-      "F": 0.0
+      "F": 0.0,
+      "E": 50.0
     }
   },
   "reporting": {
-    "formats": ["json", "html", "pdf"],
+    "formats": [
+      "json",
+      "html",
+      "pdf"
+    ],
     "include_recommendations": true,
     "max_findings_per_type": 50
   }
