@@ -270,3 +270,7 @@ The system uses `config/default.json` for default settings.
       - Issues involve lacking coherence to original ps, requiring manual cleanup on generated code and integration with existing modules in ~20% cases.
 
    *Note: The agent often assumes instructions for vague tasks. For this project, it included filling knowledge gaps about linux driver code. While definitely not recommended for production systems, it creates quick appealing solutions for demo/take-home tasks like these.*
+
+## Example Report
+
+- Example evaluations are located at: [demo_reports](demo_reports)
